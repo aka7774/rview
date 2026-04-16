@@ -1,0 +1,4 @@
+# RView Local Version - Dependencies
+pywebview>=4.0
+Pillow>=9.0
+pyinstaller>=5.0

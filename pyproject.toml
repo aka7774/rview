@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rview"
+version = "0.1.0"
+description = "A small local image viewer with desktop and browser modes."
+requires-python = ">=3.12"
+dependencies = [
+  "Flask>=2.0",
+  "Pillow>=9.0",
+  "pywebview>=4.0",
+]
+
+[project.optional-dependencies]
+build = [
+  "pyinstaller>=5.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.setuptools]
+py-modules = ["cli"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"

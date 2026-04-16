@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RView</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- サムネイル一覧モード -->
+    <div id="thumbnail-view" class="view active">
+        <div class="header">
+            <h1>RView</h1>
+            <div class="stats">
+                <span id="image-count">0 images</span>
+                <span id="current-folder-path" class="folder-path">-</span>
+                <button id="change-folder-btn" class="btn">フォルダ変更</button>
+                <button id="refresh-btn" class="btn">更新</button>
+            </div>
+        </div>
+        <div id="thumbnail-grid" class="thumbnail-grid">
+            <!-- サムネイルが動的に追加される -->
+        </div>
+    </div>
+
+    <!-- 全画面ビューワーモード -->
+    <div id="viewer-mode" class="view">
+        <!-- 画像表示エリア -->
+        <div id="image-container" class="image-container">
+            <img id="main-image" src="" alt="">
+        </div>
+
+        <!-- メニュー（デフォルトは非表示） -->
+        <div id="menu" class="menu">
+            <div class="menu-header">
+                <span id="image-info">1 / 10</span>
+                <button id="close-menu-btn" class="btn-icon">✕</button>
+            </div>
+
+            <div class="menu-content">
+                <!-- スライダー -->
+                <div class="slider-section">
+                    <label>画像選択</label>
+                    <input type="range" id="image-slider" min="0" max="0" value="0">
+                    <span id="slider-value">1 / 1</span>
+                </div>
+
+                <!-- ズームコントロール -->
+                <div class="zoom-section">
+                    <label>ズーム</label>
+                    <div class="zoom-controls">
+                        <button id="zoom-out-btn" class="btn">−</button>
+                        <span id="zoom-level">100%</span>
+                        <button id="zoom-in-btn" class="btn">+</button>
+                        <button id="zoom-reset-btn" class="btn">リセット</button>
+                    </div>
+                </div>
+
+                <!-- アクションボタン -->
+                <div class="actions">
+                    <button id="favorite-btn" class="btn btn-success">お気に入りへコピー (Insert)</button>
+                    <button id="favorite2-btn" class="btn btn-success">お気に入り2へコピー (Shift+Insert)</button>
+                    <button id="save-as-btn" class="btn btn-primary">名前をつけて保存 (Ctrl+S)</button>
+                    <button id="clipboard-btn" class="btn btn-secondary">画像をクリップボードにコピー (Ctrl+C)</button>
+                    <button id="delete-btn" class="btn btn-danger">削除 (DEL)</button>
+                </div>
+
+                <!-- ナビゲーション -->
+                <div class="navigation">
+                    <button id="prev-dir-btn" class="btn btn-secondary">前のフォルダを開く ([)</button>
+                    <button id="next-dir-btn" class="btn btn-secondary">次のフォルダを開く (])</button>
+                    <button id="fullscreen-btn" class="btn btn-secondary">全画面モード切替 (F11)</button>
+                    <button id="thumbnail-btn" class="btn btn-secondary">サムネイル一覧(Esc)</button>
+                    <button id="exit-viewer-btn" class="btn btn-danger">アプリを終了</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ナビゲーション矢印 -->
+        <button id="prev-btn" class="nav-arrow nav-arrow-left">‹</button>
+        <button id="next-btn" class="nav-arrow nav-arrow-right">›</button>
+    </div>
+
+    <!-- トースト通知 -->
+    <div id="toast" class="toast"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,441 @@
+/* リセット & ベーススタイル */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: #1a1a1a;
+    color: #ffffff;
+    overflow: hidden;
+}
+
+.view {
+    display: none;
+    width: 100vw;
+    height: 100vh;
+}
+
+.view.active {
+    display: block;
+}
+
+/* ========================================
+   サムネイル一覧モード
+======================================== */
+#thumbnail-view {
+    padding: 20px;
+    overflow-y: auto;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #333;
+}
+
+.header h1 {
+    font-size: 24px;
+    color: #4ECDC4;
+}
+
+.stats {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    min-width: 0;
+}
+
+#image-count {
+    color: #aaa;
+}
+
+.folder-path {
+    color: #9ad5d1;
+    max-width: min(46vw, 820px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+}
+
+.thumbnail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 20px;
+    padding: 10px;
+}
+
+.thumbnail-item {
+    position: relative;
+    background: #2a2a2a;
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.thumbnail-item:hover {
+    transform: scale(1.05);
+    box-shadow: 0 5px 20px rgba(78, 205, 196, 0.3);
+}
+
+.thumbnail-item img {
+    width: 100%;
+    height: 200px;
+    object-fit: cover;
+    display: block;
+}
+
+.thumbnail-info {
+    padding: 10px;
+    font-size: 12px;
+    color: #aaa;
+}
+
+.thumbnail-info .filename {
+    font-weight: bold;
+    color: #fff;
+    margin-bottom: 5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ========================================
+   ビューワーモード
+======================================== */
+#viewer-mode {
+    position: relative;
+}
+
+.image-container {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    overflow: hidden;
+}
+
+#main-image {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    transition: transform 0.2s ease;
+    cursor: grab;
+}
+
+#main-image.dragging {
+    cursor: grabbing;
+    transition: none;
+}
+
+/* 回転は JavaScript の applyZoom() 関数で管理 */
+
+/* メニュー */
+.menu {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(30, 30, 30, 0.95);
+    border-radius: 12px;
+    padding: 25px;
+    min-width: 520px;
+    max-width: 760px;
+    display: none;
+    z-index: 1000;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+.menu.active {
+    display: block;
+}
+
+.menu-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #444;
+}
+
+#image-info {
+    font-size: 16px;
+    font-weight: bold;
+    color: #4ECDC4;
+}
+
+.menu-content > div {
+    margin-bottom: 20px;
+}
+
+.menu-content label {
+    display: block;
+    margin-bottom: 8px;
+    color: #aaa;
+    font-size: 14px;
+}
+
+/* スライダー */
+.slider-section input[type="range"] {
+    width: 100%;
+    margin: 10px 0;
+}
+
+#slider-value {
+    color: #4ECDC4;
+    font-weight: bold;
+}
+
+/* ズームコントロール */
+.zoom-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+#zoom-level {
+    min-width: 50px;
+    text-align: center;
+    color: #4ECDC4;
+    font-weight: bold;
+}
+
+/* アクション & ナビゲーションボタン */
+.actions,
+.navigation {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+/* ボタンスタイル */
+.btn {
+    padding: 10px 15px;
+    border: none;
+    border-radius: 6px;
+    background: #3a3a3a;
+    color: #fff;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+    white-space: normal;
+    line-height: 1.35;
+}
+
+.btn:hover {
+    background: #4a4a4a;
+}
+
+.btn-primary {
+    background: #4ECDC4;
+    color: #000;
+}
+
+.btn-primary:hover {
+    background: #45B7D1;
+}
+
+.btn-success {
+    background: #95E1D3;
+    color: #000;
+}
+
+.btn-success:hover {
+    background: #7dd3c0;
+}
+
+.btn-danger {
+    background: #F38181;
+    color: #000;
+}
+
+.btn-danger:hover {
+    background: #e66767;
+}
+
+.btn-secondary {
+    background: #555;
+}
+
+.btn-secondary:hover {
+    background: #666;
+}
+
+.btn-icon {
+    background: transparent;
+    border: none;
+    color: #fff;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    line-height: 1;
+}
+
+.btn-icon:hover {
+    color: #F38181;
+}
+
+/* ナビゲーション矢印 */
+.nav-arrow {
+    position: fixed;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(78, 205, 196, 0.8);
+    color: #000;
+    border: none;
+    font-size: 48px;
+    width: 60px;
+    height: 80px;
+    cursor: pointer;
+    z-index: 900;
+    transition: background 0.2s, opacity 0.3s;
+    border-radius: 4px;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.nav-arrow.visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.nav-arrow:hover {
+    background: rgba(78, 205, 196, 1);
+}
+
+.nav-arrow-left {
+    left: 20px;
+}
+
+.nav-arrow-right {
+    right: 20px;
+}
+
+/* レンジスライダーのカスタムスタイル */
+input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    background: #444;
+    border-radius: 3px;
+    outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    background: #4ECDC4;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+input[type="range"]::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    background: #4ECDC4;
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+}
+
+/* スクロールバーのカスタマイズ */
+::-webkit-scrollbar {
+    width: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1a1a1a;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #4ECDC4;
+    border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #45B7D1;
+}
+
+/* トースト通知 */
+.toast {
+    position: fixed;
+    bottom: 100px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(78, 205, 196, 0.95);
+    color: #000;
+    padding: 15px 30px;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: bold;
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    z-index: 9999;
+}
+
+.toast.show {
+    opacity: 1;
+}
+
+.toast.success {
+    background: rgba(149, 225, 211, 0.95);
+}
+
+.toast.error {
+    background: rgba(243, 129, 129, 0.95);
+}
+
+.toast.info {
+    background: rgba(78, 205, 196, 0.95);
+}
+
+/* カーソル非表示 */
+body.cursor-hidden,
+body.cursor-hidden * {
+    cursor: none !important;
+}
+
+@media (max-width: 800px) {
+    .menu {
+        min-width: 0;
+        width: min(96vw, 560px);
+        max-height: 92vh;
+        overflow-y: auto;
+    }
+
+    .actions,
+    .navigation {
+        grid-template-columns: 1fr;
+    }
+
+    .zoom-controls {
+        flex-wrap: wrap;
+    }
+
+    .stats {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
+    .folder-path {
+        max-width: 100%;
+        flex: 1 1 100%;
+        text-align: right;
+    }
+}
