@@ -7,6 +7,10 @@ RView is a small image viewer with two launch modes:
 
 It supports thumbnail browsing, fullscreen viewing, zoom and pan, auto-rotation for portrait/landscape mismatches, copying images to favorite folders, deleting images, opening adjacent folders, and keyboard shortcuts.
 
+Favorite slot 1 uses a sibling directory whose name is the selected image directory
+plus `f`; slot 2 uses the same rule with `g`. For example, images in `sample`
+are copied to `samplef` and `sampleg`. Adding the same file again is a no-op.
+
 ## Requirements
 
 - Python 3.12 or newer

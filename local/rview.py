@@ -12,7 +12,7 @@ import io
 import time
 import ctypes
 from pathlib import Path
-from typing import List, Dict
+from typing import Dict, List, Optional
 import webview
 from PIL import Image
 
@@ -31,8 +31,7 @@ class RViewAPI:
 
     def __init__(self, image_dir: str):
         self.image_dir = Path(image_dir)
-        self.favorites_dir = self.image_dir.parent / "favorites"
-        self.favorites2_dir = self.image_dir.parent / "favorites2"
+        self._update_favorite_directories()
 
         # サポートする画像形式
         self.supported_formats = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif'}
@@ -161,9 +160,9 @@ class RViewAPI:
         """画像をお気に入りフォルダにコピー"""
         try:
             source_path = Path(image_path)
-            dest_path = self._get_unique_copy_path(self.favorites_dir, source_path)
-
-            shutil.copy2(source_path, dest_path)
+            dest_path = self._copy_to_favorites_if_missing(self.favorites_dir, source_path)
+            if dest_path is None:
+                return True
             print(f"Added to favorites: {source_path} -> {dest_path}")
             return True
 
@@ -175,9 +174,9 @@ class RViewAPI:
         """画像をお気に入り2フォルダにコピー"""
         try:
             source_path = Path(image_path)
-            dest_path = self._get_unique_copy_path(self.favorites2_dir, source_path)
-
-            shutil.copy2(source_path, dest_path)
+            dest_path = self._copy_to_favorites_if_missing(self.favorites2_dir, source_path)
+            if dest_path is None:
+                return True
             print(f"Added to favorites2: {source_path} -> {dest_path}")
             return True
 
@@ -195,8 +194,7 @@ class RViewAPI:
                 and self._has_supported_images(new_path)
             ):
                 self.image_dir = new_path
-                self.favorites_dir = new_path.parent / "favorites"
-                self.favorites2_dir = new_path.parent / "favorites2"
+                self._update_favorite_directories()
                 self._update_image_files()
                 print(f"Changed folder to: {new_path}")
                 return True
@@ -286,19 +284,20 @@ class RViewAPI:
             print(f"Error copying image to clipboard: {e}")
             return False
 
-    def _get_unique_copy_path(self, target_dir: Path, source_path: Path) -> Path:
-        """コピー先フォルダを必要時に作成し、重複時は連番を振る"""
+    def _update_favorite_directories(self) -> None:
+        """画像フォルダ名の末尾へ f/g を付けた隣接フォルダを設定する。"""
+        self.favorites_dir = self.image_dir.with_name(f"{self.image_dir.name}f")
+        self.favorites2_dir = self.image_dir.with_name(f"{self.image_dir.name}g")
+
+    def _copy_to_favorites_if_missing(
+        self, target_dir: Path, source_path: Path
+    ) -> Optional[Path]:
+        """同名ファイルが未登録の場合だけお気に入りへコピーする。"""
         target_dir.mkdir(parents=True, exist_ok=True)
         dest_path = target_dir / source_path.name
-        if not dest_path.exists():
-            return dest_path
-
-        base_name = dest_path.stem
-        ext = dest_path.suffix
-        counter = 1
-        while dest_path.exists():
-            dest_path = target_dir / f"{base_name}_{counter}{ext}"
-            counter += 1
+        if dest_path.exists():
+            return None
+        shutil.copy2(source_path, dest_path)
         return dest_path
 
     def _has_supported_images(self, target_dir: Path) -> bool:

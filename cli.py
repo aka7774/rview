@@ -45,23 +45,18 @@ def _image_meta(path: Path) -> Dict[str, Any]:
 
 
 def _favorites_dir(image_dir: Path, slot: int) -> Path:
-    name = "favorites2" if slot == 2 else "favorites"
-    target = image_dir.parent / name
+    suffix = "g" if slot == 2 else "f"
+    target = image_dir.with_name(f"{image_dir.name}{suffix}")
     target.mkdir(parents=True, exist_ok=True)
     return target
 
 
-def _copy_unique(src: Path, dest_dir: Path) -> Path:
+def _copy_if_missing(src: Path, dest_dir: Path) -> tuple[Path, bool]:
     dest = dest_dir / src.name
     if dest.exists():
-        stem = dest.stem
-        suffix = dest.suffix
-        counter = 1
-        while dest.exists():
-            dest = dest_dir / f"{stem}_{counter}{suffix}"
-            counter += 1
+        return dest, False
     shutil.copy2(src, dest)
-    return dest
+    return dest, True
 
 
 def _step_directory(current_dir: Path, direction: str) -> Dict[str, Any]:
@@ -227,8 +222,8 @@ def main() -> None:
             _print_json({"success": False, "error": "image not found"})
             return
         dest_dir = _favorites_dir(image_path.parent, args.slot)
-        dest = _copy_unique(image_path, dest_dir)
-        _print_json({"success": True, "path": str(dest)})
+        dest, copied = _copy_if_missing(image_path, dest_dir)
+        _print_json({"success": True, "path": str(dest), "copied": copied})
         return
 
     if args.command == "delete":
