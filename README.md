@@ -7,6 +7,11 @@ RView is a small image viewer with two launch modes:
 
 It supports thumbnail browsing, fullscreen viewing, zoom and pan, auto-rotation for portrait/landscape mismatches, copying images to favorite folders, deleting images, opening adjacent folders, and keyboard shortcuts.
 
+Image lists contain metadata only. RView loads the displayed original on demand,
+and uses previews of at most 320 pixels near the visible thumbnail area. Images
+outside that area are released. Folder changes discard unfinished responses from
+the previous folder. The window title includes the current folder name.
+
 Favorite slot 1 uses a sibling directory whose name is the selected image directory
 plus `f`; slot 2 uses the same rule with `g`. For example, images in `sample`
 are copied to `samplef` and `sampleg`. Adding the same file again is a no-op.
@@ -96,8 +101,12 @@ PyInstaller does not cross-compile Windows executables from Linux. If you run Py
 
 | Key | Action |
 | --- | --- |
-| Left | Previous image |
-| Right | Next image |
+| A / Left / Numpad 4 | Previous image |
+| D / Right / Numpad 6 | Next image |
+| W / Up / Numpad 5 | Good (+2), then next image |
+| S / Down / Numpad 2 | Bad (-2), then next image |
+| Ctrl+Up / Ctrl+Numpad 5 | Slightly good (+1), then next image |
+| Ctrl+Down / Ctrl+Numpad 2 | Slightly bad (-1), then next image |
 | Insert | Copy to favorites |
 | Shift+Insert | Copy to favorites 2 |
 | Ctrl+S | Save as |
@@ -108,6 +117,18 @@ PyInstaller does not cross-compile Windows executables from Linux. If you run Py
 | Delete | Delete image |
 | Escape | Close menu / return to thumbnails |
 | F11 | Toggle fullscreen |
+
+Ratings append to `rview-ratings.jsonl` in the image directory, with the filename,
+rating and UTC time. Rating does not move or modify the image. The last record
+for a filename is its current rating; earlier judgments remain available.
+Saving must succeed before advancing, and the last image stays selected.
+Ctrl+S retains Save As; Ctrl+W is reserved by browsers. Use Ctrl+arrows or
+Ctrl+numpad for the weaker ratings. Numpad mappings use physical keys with
+either Num Lock setting.
+
+Clicking outside an open menu closes it. A click immediately after regaining
+window focus is ignored for menu opening; native focus behavior can vary by
+desktop webview backend.
 
 ## Supported Image Formats
 

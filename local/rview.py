@@ -16,6 +16,9 @@ from typing import Dict, List, Optional
 import webview
 from PIL import Image
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from rview_media import image_data_url, managed_image, record_rating
+
 
 def get_resource_path(relative_path: str) -> Path:
     """PyInstallerでパッケージした場合のリソースパスを取得"""
@@ -45,7 +48,7 @@ class RViewAPI:
         self._image_files = []
         if self.image_dir.exists():
             for file_path in sorted(self.image_dir.iterdir()):
-                if file_path.suffix.lower() in self.supported_formats:
+                if file_path.is_file() and file_path.suffix.lower() in self.supported_formats:
                     self._image_files.append(file_path)
 
     def get_image_count(self) -> int:
@@ -87,26 +90,7 @@ class RViewAPI:
             with Image.open(file_path) as img:
                 width, height = img.size
 
-            # 画像をbase64エンコード
-            with open(file_path, 'rb') as f:
-                image_data = f.read()
-                base64_data = base64.b64encode(image_data).decode('utf-8')
-
-                # MIMEタイプを決定
-                ext = file_path.suffix.lower()
-                mime_type = {
-                    '.png': 'image/png',
-                    '.jpg': 'image/jpeg',
-                    '.jpeg': 'image/jpeg',
-                    '.webp': 'image/webp',
-                    '.bmp': 'image/bmp',
-                    '.gif': 'image/gif'
-                }.get(ext, 'image/png')
-
-                data_url = f"data:{mime_type};base64,{base64_data}"
-
             return {
-                "data": data_url,
                 "name": file_path.name,
                 "width": width,
                 "height": height,
@@ -116,6 +100,14 @@ class RViewAPI:
         except Exception as e:
             print(f"Error loading image {file_path}: {e}")
             return None
+
+    def get_image_source(self, image_path: str, thumbnail: bool = False) -> str:
+        path = managed_image(self.image_dir, image_path, self.supported_formats)
+        return image_data_url(path, thumbnail=thumbnail)
+
+    def rate_image(self, image_path: str, rating: int) -> bool:
+        path = managed_image(self.image_dir, image_path, self.supported_formats)
+        return record_rating(self.image_dir, path, rating)
 
     def get_images(self) -> List[Dict]:
         """

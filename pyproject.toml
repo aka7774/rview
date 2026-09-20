@@ -22,7 +22,7 @@ build = [
 package = false
 
 [tool.setuptools]
-py-modules = ["cli"]
+py-modules = ["cli", "rview_media"]
 
 [tool.ruff]
 line-length = 120

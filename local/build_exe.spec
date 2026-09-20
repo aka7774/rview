@@ -15,7 +15,7 @@ datas = [
 
 a = Analysis(
     ['rview.py'],
-    pathex=[],
+    pathex=[os.path.join(os.path.dirname(SPEC), '..')],
     binaries=[],
     datas=datas,
     hiddenimports=['PIL', 'PIL.Image'],

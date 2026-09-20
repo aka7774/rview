@@ -1,6 +1,12 @@
 // グローバル状態管理
 const state = {
     images: [],
+    imagePaths: new Set(),
+    loadVersion: 0,
+    directory: "",
+    changingDirectory: false,
+    watchingInFlight: false,
+    ratingInFlight: false,
     currentIndex: 0,
     isViewerMode: false,
     isMenuOpen: false,
@@ -102,6 +108,22 @@ function detectMode() {
 
 // APIラッパー関数（ローカル/リモート両対応）
 const api = {
+    async getImageSource(image, thumbnail = false) {
+        if (state.isRemoteMode) {
+            return `/api/media?path=${encodeURIComponent(image.file_path)}&thumbnail=${thumbnail ? 1 : 0}`;
+        }
+        return await window.pywebview.api.get_image_source(image.file_path, thumbnail);
+    },
+
+    async rateImage(filePath, rating) {
+        if (!state.isRemoteMode) return await window.pywebview.api.rate_image(filePath, rating);
+        const response = await fetch('/api/rating', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({image_path: filePath, rating})
+        });
+        return response.ok && (await response.json()).success;
+    },
+
     async getImageCount() {
         if (state.isRemoteMode) {
             const response = await fetch('/api/count');
@@ -231,7 +253,7 @@ const api = {
         if (state.isRemoteMode) {
             // リモートモード: ダウンロードリンクを使用
             const link = document.createElement('a');
-            link.href = `/api/download/${index}`;
+            link.href = `/api/media?path=${encodeURIComponent(filePath)}&download=1`;
             link.click();
             return true;
         } else {
@@ -285,77 +307,138 @@ const api = {
     }
 };
 
-// 段階的な画像読み込み
+// Listing carries metadata only. Old folder responses cannot append to a new listing.
 async function loadImagesProgressively() {
+    const version = ++state.loadVersion;
+    state.isLoading = true;
+    state.images = [];
+    state.imagePaths.clear();
+    state.loadedCount = state.totalCount = 0;
+    clearMainImage();
+    renderThumbnails();
     try {
-        state.isLoading = true;
+        const directory = await api.getCurrentDirectory();
+        if (version !== state.loadVersion) return;
+        state.directory = directory;
+        elements.currentFolderPath.textContent = directory || '-';
+        elements.currentFolderPath.title = directory || '';
         showLoading();
-
-        // まず総数を取得
-        const totalCount = await api.getImageCount();
-        state.totalCount = totalCount;
-        state.images = [];
-        state.loadedCount = 0;
-
-        if (totalCount === 0) {
-            hideLoading();
-            updateImageCount();
-            renderThumbnails();
-            state.isLoading = false;
-            return;
-        }
-
-        // 最初の30枚を読み込んで即座に表示
-        const INITIAL_BATCH = 30;
-        const firstBatch = await api.getImagesBatch(0, INITIAL_BATCH);
-        state.images = firstBatch.images;
-        state.loadedCount = firstBatch.loaded;
-
-        updateLoadingProgress();
+        const total = await api.getImageCount();
+        if (version !== state.loadVersion) return;
+        state.totalCount = total;
+        const batch = await api.getImagesBatch(0, 30);
+        if (version !== state.loadVersion) return;
+        appendImageBatch(batch);
         updateImageCount();
-        renderThumbnails();
-
-        // 残りをバックグラウンドで読み込む
-        if (state.loadedCount < totalCount) {
-            loadRemainingImages();
+        if (state.loadedCount < total) {
+            loadRemainingImages(version);
         } else {
-            hideLoading();
             state.isLoading = false;
+            hideLoading();
         }
-
     } catch (error) {
+        if (version !== state.loadVersion) return;
         console.error('Failed to load images:', error);
-        hideLoading();
         state.isLoading = false;
-        state.images = [];
+        hideLoading();
+        showToast('画像一覧を読み込めませんでした', 'error');
     }
 }
 
-// 残りの画像をバックグラウンドで読み込む
-async function loadRemainingImages() {
-    const BATCH_SIZE = 50;
+function appendImageBatch(batch) {
+    const added = batch.images.filter(image => {
+        if (state.imagePaths.has(image.file_path)) return false;
+        state.imagePaths.add(image.file_path);
+        return true;
+    });
+    const start = state.images.length;
+    state.images.push(...added);
+    state.loadedCount = batch.loaded;
+    appendThumbnails(added, start);
+    updateSlider();
+}
 
-    while (state.loadedCount < state.totalCount) {
-        try {
-            const batch = await api.getImagesBatch(state.loadedCount, BATCH_SIZE);
-            state.images = state.images.concat(batch.images);
-            state.loadedCount = batch.loaded;
-
+async function loadRemainingImages(version) {
+    try {
+        while (version === state.loadVersion && state.loadedCount < state.totalCount) {
+            const start = state.loadedCount;
+            const batch = await api.getImagesBatch(start, 50);
+            if (version !== state.loadVersion) return;
+            if (batch.loaded <= start) break;
+            appendImageBatch(batch);
             updateLoadingProgress();
             updateImageCount();
-            appendThumbnails(batch.images, state.images.length - batch.images.length);
-
-            // UIの応答性を維持するための小さな遅延
             await new Promise(resolve => setTimeout(resolve, 10));
-        } catch (error) {
-            console.error('Failed to load batch:', error);
-            break;
+        }
+    } catch (error) {
+        if (version === state.loadVersion) console.error('Failed to load batch:', error);
+    } finally {
+        if (version === state.loadVersion) {
+            state.isLoading = false;
+            hideLoading();
+            updateImageCount();
         }
     }
+}
 
-    hideLoading();
-    state.isLoading = false;
-    console.log(`Loaded all ${state.images.length} images`);
+// Only nearby previews are retained; at most two desktop decodes run at once.
+const thumbnailQueue = new Set();
+let thumbnailRequests = 0;
+const thumbnailObserver = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+        const img = entry.target;
+        img.wanted = entry.isIntersecting;
+        if (!img.wanted) {
+            thumbnailQueue.delete(img);
+            img.removeAttribute('src');
+        } else if (!img.hasAttribute('src') && !img.loadingPreview) {
+            thumbnailQueue.add(img);
+        }
+    }
+    pumpThumbnails();
+}, {root: elements.thumbnailView, rootMargin: '200px'});
+
+function pumpThumbnails() {
+    while (thumbnailRequests < 2 && thumbnailQueue.size) {
+        const img = thumbnailQueue.values().next().value;
+        thumbnailQueue.delete(img);
+        if (!img.isConnected || !img.wanted) continue;
+        const version = state.loadVersion;
+        img.loadingPreview = true;
+        thumbnailRequests++;
+        api.getImageSource(img.imageRecord, true).then(src => {
+            if (img.isConnected && img.wanted && version === state.loadVersion) img.src = src;
+        }).catch(error => console.error('Preview unavailable:', error)).finally(() => {
+            img.loadingPreview = false;
+            thumbnailRequests--;
+            pumpThumbnails();
+        });
+    }
+}
+
+let pendingMainImage = null;
+let loadingMainImage = false;
+let imageRequest = 0;
+function clearMainImage() {
+    imageRequest++;
+    pendingMainImage = null;
+    elements.mainImage.removeAttribute('src');
+}
+async function loadMainImage() {
+    if (loadingMainImage) return;
+    loadingMainImage = true;
+    try {
+        while (pendingMainImage) {
+            const request = pendingMainImage;
+            pendingMainImage = null;
+            try {
+                const src = await api.getImageSource(request.image);
+                if (request.id === imageRequest && state.isViewerMode) elements.mainImage.src = src;
+            } catch (error) {
+                if (request.id === imageRequest) showToast('画像を読み込めませんでした', 'error');
+            }
+        }
+    } finally { loadingMainImage = false; }
 }
 
 // ローディング表示（タイトルバーに表示）
@@ -364,7 +447,8 @@ function showLoading() {
 }
 
 function hideLoading() {
-    updateWindowTitle('RView');
+    if (state.isViewerMode && state.images[state.currentIndex]) updateWindowTitleForImage();
+    else updateWindowTitle('RView');
 }
 
 function updateLoadingProgress() {
@@ -374,7 +458,9 @@ function updateLoadingProgress() {
 
 // サムネイル一覧の描画
 function renderThumbnails() {
-    elements.thumbnailGrid.innerHTML = '';
+    thumbnailObserver.disconnect();
+    thumbnailQueue.clear();
+    elements.thumbnailGrid.replaceChildren();
 
     state.images.forEach((image, index) => {
         const item = createThumbnailItem(image, index);
@@ -394,13 +480,20 @@ function appendThumbnails(images, startIndex) {
 function createThumbnailItem(image, index) {
     const item = document.createElement('div');
     item.className = 'thumbnail-item';
-    item.innerHTML = `
-        <img src="${image.data}" alt="${image.name}">
-        <div class="thumbnail-info">
-            <div class="filename">${image.name}</div>
-            <div>${image.width} x ${image.height}</div>
-        </div>
-    `;
+    const img = document.createElement('img');
+    img.alt = image.name;
+    img.decoding = 'async';
+    img.imageRecord = image;
+    const info = document.createElement('div');
+    info.className = 'thumbnail-info';
+    const filename = document.createElement('div');
+    filename.className = 'filename';
+    filename.textContent = image.name;
+    const dimensions = document.createElement('div');
+    dimensions.textContent = `${image.width} x ${image.height}`;
+    info.append(filename, dimensions);
+    item.append(img, info);
+    thumbnailObserver.observe(img);
     item.addEventListener('click', () => openViewer(index));
     return item;
 }
@@ -420,6 +513,7 @@ function openViewer(index) {
 // ビューワーを閉じる（サムネイル一覧に戻る）
 function closeViewer() {
     state.isViewerMode = false;
+    clearMainImage();
     updateWatchingState();
     elements.viewerMode.classList.remove('active');
     elements.thumbnailView.classList.add('active');
@@ -457,7 +551,9 @@ function showImage(index) {
     hideToast();
 
     // 画像データを設定
-    elements.mainImage.src = image.data;
+    clearMainImage();
+    pendingMainImage = {image, id: imageRequest};
+    loadMainImage();
 
     // 情報を更新
     updateImageInfo();
@@ -554,8 +650,11 @@ function updateImageInfo() {
 
 // ウィンドウタイトルを更新
 function updateWindowTitle(title) {
+    const folder = state.directory.split(/[\\/]/).filter(Boolean).pop();
+    title = folder ? `${folder} — ${title}` : title;
+    document.title = title;
     try {
-        api.setWindowTitle(title);
+        Promise.resolve(api.setWindowTitle(title)).catch(console.error);
     } catch (error) {
         console.error('Failed to set window title:', error);
     }
@@ -584,6 +683,7 @@ async function updateCurrentFolderPath() {
     try {
         const directory = await api.getCurrentDirectory();
         if (directory) {
+            state.directory = directory;
             elements.currentFolderPath.textContent = directory;
             elements.currentFolderPath.title = directory;
             return;
@@ -727,18 +827,21 @@ function prevImage() {
 // 新規画像の監視
 function startWatchingForNewImages() {
     setInterval(async () => {
-        if (!state.isViewerMode || !state.isWatchingForNew) return;
+        if (!state.isViewerMode || !state.isWatchingForNew || state.isLoading || state.changingDirectory || state.watchingInFlight) return;
+        const version = state.loadVersion;
+        state.watchingInFlight = true;
 
         try {
             const newCount = await api.getImageCount();
-            if (newCount > state.images.length) {
+            if (version !== state.loadVersion) return;
+            if (newCount > state.loadedCount) {
                 // 新しい画像を取得
-                const batch = await api.getImagesBatch(state.images.length, newCount - state.images.length);
+                const batch = await api.getImagesBatch(state.loadedCount, Math.min(50, newCount - state.loadedCount));
+                if (version !== state.loadVersion) return;
                 if (batch.images.length > 0) {
                     console.log(`New image detected! (${batch.images.length} new)`);
-                    state.images = state.images.concat(batch.images);
+                    appendImageBatch(batch);
                     state.totalCount = newCount;
-                    state.loadedCount = newCount;
                     updateImageCount();
 
                     // 最後を見ている時だけ、新しい最新画像へ自動追従
@@ -747,7 +850,7 @@ function startWatchingForNewImages() {
             }
         } catch (error) {
             console.error('Failed to check for new images:', error);
-        }
+        } finally { state.watchingInFlight = false; }
     }, 1000); // 1秒ごとにチェック
 }
 
@@ -787,6 +890,22 @@ async function addToFavorites2() {
     }
 }
 
+async function rateCurrentImage(rating) {
+    if (state.ratingInFlight || !state.isViewerMode || !state.images.length || state.changingDirectory) return;
+    const image = state.images[state.currentIndex];
+    const version = state.loadVersion;
+    state.ratingInFlight = true;
+    try {
+        if (!await api.rateImage(image.file_path, rating)) throw new Error('Rating not saved');
+        if (version !== state.loadVersion || state.images[state.currentIndex] !== image) return;
+        nextImage();
+        const labels = {2: '良い', 1: 'やや良い', '-1': 'やや悪い', '-2': '悪い'};
+        showToast(`${labels[rating]}を記録しました`, 'success', 900);
+    } catch (error) {
+        showToast('評価を保存できませんでした', 'error');
+    } finally { state.ratingInFlight = false; }
+}
+
 async function copyCurrentImageToClipboard() {
     try {
         const image = state.images[state.currentIndex];
@@ -813,6 +932,8 @@ async function deleteImage() {
 
         // リストから削除
         state.images.splice(state.currentIndex, 1);
+        state.imagePaths.delete(image.file_path);
+        renderThumbnails();
         state.totalCount--;
         state.loadedCount--;
         updateImageCount();
@@ -834,10 +955,15 @@ async function deleteImage() {
 }
 
 async function openAdjacentDirectory(direction) {
+    if (state.changingDirectory) return;
+    state.changingDirectory = true;
+    state.loadVersion++;
     const wasViewerMode = state.isViewerMode;
     try {
         const result = await api.stepDirectory(direction);
         if (!result || !result.success) {
+            state.isLoading = state.loadedCount < state.totalCount;
+            if (state.isLoading) loadRemainingImages(state.loadVersion);
             showToast('移動できるフォルダがありません', 'info');
             return;
         }
@@ -847,8 +973,10 @@ async function openAdjacentDirectory(direction) {
         }
     } catch (error) {
         console.error('Failed to open adjacent folder:', error);
+        await reloadWithNewDirectory(false);
+        if (wasViewerMode && state.images.length) openViewer(0);
         showToast('フォルダ移動に失敗しました', 'error');
-    }
+    } finally { state.changingDirectory = false; }
 }
 
 async function openPreviousDirectory() {
@@ -942,10 +1070,7 @@ function setupDragAndDrop() {
             if (files.length > 0) {
                 const path = files[0].path;
                 if (path) {
-                    const success = await api.changeDirectory(path);
-                    if (success) {
-                        await reloadWithNewDirectory();
-                    }
+                    await changeDirectory(path);
                 }
             }
         }
@@ -954,17 +1079,22 @@ function setupDragAndDrop() {
 
 // フォルダ変更
 async function changeDirectory(path) {
+    if (state.changingDirectory) return;
+    state.changingDirectory = true;
+    state.loadVersion++;
     try {
         const success = await api.changeDirectory(path);
         if (success) {
             await reloadWithNewDirectory();
             return;
         }
+        await reloadWithNewDirectory(false);
         showToast('画像があるフォルダのみ開けます', 'error');
     } catch (error) {
         console.error('Failed to change folder:', error);
+        await reloadWithNewDirectory(false);
         showToast('フォルダ変更に失敗しました', 'error');
-    }
+    } finally { state.changingDirectory = false; }
 }
 
 async function changeDirectoryFromButton() {
@@ -987,15 +1117,13 @@ async function changeDirectoryFromButton() {
 }
 
 // 新しいフォルダで再読み込み
-async function reloadWithNewDirectory() {
+async function reloadWithNewDirectory(notify = true) {
     if (state.isViewerMode) {
         closeViewer();
     }
 
     await loadImagesProgressively();
-    renderThumbnails();
-    await updateCurrentFolderPath();
-    showToast('フォルダを変更しました', 'info');
+    if (notify) showToast('フォルダを変更しました', 'info');
 }
 
 // 矢印ボタンの表示制御
@@ -1063,8 +1191,7 @@ function setupEventListeners() {
     // リフレッシュボタン
     document.getElementById('refresh-btn').addEventListener('click', async () => {
         await loadImagesProgressively();
-        renderThumbnails();
-        await updateCurrentFolderPath();
+
     });
     document.getElementById('change-folder-btn').addEventListener('click', changeDirectoryFromButton);
 
@@ -1078,6 +1205,9 @@ function setupEventListeners() {
     document.getElementById('favorite2-btn').addEventListener('click', addToFavorites2);
     document.getElementById('clipboard-btn').addEventListener('click', copyCurrentImageToClipboard);
     document.getElementById('delete-btn').addEventListener('click', deleteImage);
+    document.querySelectorAll('[data-rating]').forEach(button => {
+        button.addEventListener('click', () => rateCurrentImage(Number(button.dataset.rating)));
+    });
     document.getElementById('prev-dir-btn').addEventListener('click', openPreviousDirectory);
     document.getElementById('next-dir-btn').addEventListener('click', openNextDirectory);
     document.getElementById('fullscreen-btn').addEventListener('click', toggleFullscreen);
@@ -1093,9 +1223,21 @@ function setupEventListeners() {
         showImage(parseInt(e.target.value));
     });
 
-    // 画像クリックでメニュー表示
+    // A click used to focus the window must not also open its menu.
+    let pointerStartedUnfocused = false;
+    window.addEventListener('blur', () => { pointerStartedUnfocused = true; });
+    window.addEventListener('focus', () => { setTimeout(() => { pointerStartedUnfocused = false; }, 200); });
+    document.addEventListener('pointerdown', () => {
+        if (!document.hasFocus()) pointerStartedUnfocused = true;
+    }, true);
+    document.addEventListener('click', (event) => {
+        pointerStartedUnfocused = false;
+        if (state.isMenuOpen && !elements.menu.contains(event.target) && !elements.imageContainer.contains(event.target)) closeMenu();
+    });
+
+    // Image/background clicks toggle the menu; its own controls stay open.
     elements.imageContainer.addEventListener('click', (e) => {
-        if (!state.isViewerMode || state.isMenuOpen) {
+        if (!state.isViewerMode || pointerStartedUnfocused) {
             return;
         }
         if (state.suppressNextClick) {
@@ -1112,6 +1254,7 @@ function setupEventListeners() {
 
     // キーボード操作
     document.addEventListener('keydown', (e) => {
+        if (e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
         // F11キーは常に有効（全画面切り替え）
         if (e.key === 'F11') {
             e.preventDefault();
@@ -1146,11 +1289,26 @@ function setupEventListeners() {
 
         if (!state.isViewerMode) return;
 
+        const up = ['ArrowUp', 'Numpad5'].includes(e.code) || (e.code === 'KeyW' && !withModifier);
+        const down = ['ArrowDown', 'Numpad2'].includes(e.code) || (e.code === 'KeyS' && !withModifier);
+        if ((up || down) && !e.altKey && !e.metaKey) {
+            e.preventDefault();
+            if (!e.repeat) rateCurrentImage((up ? 1 : -1) * (e.ctrlKey ? 1 : 2));
+            return;
+        }
+        if (!withModifier && !e.altKey && ['KeyA', 'Numpad4', 'KeyD', 'Numpad6'].includes(e.code)) {
+            e.preventDefault();
+            if (['KeyA', 'Numpad4'].includes(e.code)) prevImage(); else nextImage();
+            return;
+        }
+
         switch (e.key) {
             case 'ArrowLeft':
+                e.preventDefault();
                 prevImage();
                 break;
             case 'ArrowRight':
+                e.preventDefault();
                 nextImage();
                 break;
             case 'Insert':

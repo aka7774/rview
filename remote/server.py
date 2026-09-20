@@ -5,13 +5,18 @@ RView Remote Server
 """
 
 import argparse
+import io
 import shutil
+import sys
 from pathlib import Path
 from typing import List, Dict, Optional
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from PIL import Image
 import threading
 import webbrowser
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from rview_media import managed_image, record_rating, thumbnail_bytes
 
 app = Flask(__name__,
     static_folder='../web',
@@ -74,7 +79,6 @@ class RViewRemoteAPI:
 
             # リモート版ではURLを返す
             return {
-                "data": f"/api/image/{index}",
                 "name": file_path.name,
                 "width": width,
                 "height": height,
@@ -91,6 +95,10 @@ class RViewRemoteAPI:
         if 0 <= index < len(self._image_files):
             return self._image_files[index]
         return None
+
+    def rate_image(self, image_path: str, rating: int) -> bool:
+        path = managed_image(self.image_dir, image_path, self.supported_formats)
+        return record_rating(self.image_dir, path, rating)
 
     def add_to_favorites(self, image_path: str) -> bool:
         """画像をお気に入りフォルダにコピー"""
@@ -285,6 +293,27 @@ def get_image(index):
     if file_path and file_path.exists():
         return send_file(file_path)
     return jsonify({"error": "Image not found"}), 404
+
+
+@app.route('/api/media')
+def get_media():
+    """Stable file identity, independent of list indices and folder changes."""
+    try:
+        path = managed_image(api.image_dir, request.args.get('path', ''), api.supported_formats)
+        if request.args.get('thumbnail') == '1':
+            return send_file(io.BytesIO(thumbnail_bytes(path)), mimetype='image/webp', max_age=0)
+        return send_file(path, as_attachment=request.args.get('download') == '1', download_name=path.name)
+    except (ValueError, OSError):
+        return jsonify({"error": "Image not found"}), 404
+
+
+@app.route('/api/rating', methods=['POST'])
+def rate_image():
+    data = request.get_json() or {}
+    try:
+        return jsonify(success=api.rate_image(data.get('image_path', ''), data.get('rating')))
+    except (ValueError, OSError):
+        return jsonify(success=False), 400
 
 @app.route('/api/download/<int:index>')
 def download_image(index):
