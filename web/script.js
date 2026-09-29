@@ -7,6 +7,7 @@ const state = {
     changingDirectory: false,
     watchingInFlight: false,
     ratingInFlight: false,
+    favoriteInFlight: false,
     currentIndex: 0,
     isViewerMode: false,
     isMenuOpen: false,
@@ -827,7 +828,7 @@ function prevImage() {
 // 新規画像の監視
 function startWatchingForNewImages() {
     setInterval(async () => {
-        if (!state.isViewerMode || !state.isWatchingForNew || state.isLoading || state.changingDirectory || state.watchingInFlight) return;
+        if (!state.isViewerMode || !state.isWatchingForNew || state.isLoading || state.changingDirectory || state.watchingInFlight || state.favoriteInFlight) return;
         const version = state.loadVersion;
         state.watchingInFlight = true;
 
@@ -869,24 +870,52 @@ async function saveAs() {
 }
 
 async function addToFavorites() {
-    try {
-        const image = state.images[state.currentIndex];
-        await api.addToFavorites(image.file_path);
-        showToast(`お気に入りに追加: ${image.name}`, 'success', 1000);
-    } catch (error) {
-        console.error('Failed to add to favorites:', error);
-        showToast('お気に入りへの追加に失敗しました', 'error');
-    }
+    await moveCurrentToFavorites(1);
 }
 
 async function addToFavorites2() {
+    await moveCurrentToFavorites(2);
+}
+
+async function moveCurrentToFavorites(slot) {
+    const image = state.images[state.currentIndex];
+    if (!image || state.favoriteInFlight || state.changingDirectory) return;
+    state.favoriteInFlight = true;
+    // Cancel batches using pre-move offsets, then resume at the adjusted offset.
+    const version = ++state.loadVersion;
     try {
-        const image = state.images[state.currentIndex];
-        await api.addToFavorites2(image.file_path);
-        showToast(`お気に入り2に追加: ${image.name}`, 'success', 1000);
+        const success = slot === 2
+            ? await api.addToFavorites2(image.file_path)
+            : await api.addToFavorites(image.file_path);
+        if (!success) throw new Error('Move failed');
+        if (version !== state.loadVersion) return;
+        const index = state.images.indexOf(image);
+        if (index >= 0) {
+            state.images.splice(index, 1);
+            state.imagePaths.delete(image.file_path);
+            state.loadedCount--;
+            state.totalCount--;
+            if (index < state.currentIndex) state.currentIndex--;
+            renderThumbnails();
+            updateImageCount();
+            clearMainImage();
+            if (state.images.length) {
+                showImage(Math.min(state.currentIndex, state.images.length - 1));
+            } else {
+                closeViewer();
+            }
+        }
+        showToast(`お気に入り${slot === 2 ? '2' : ''}に追加: ${image.name}`, 'success', 1000);
     } catch (error) {
-        console.error('Failed to add to favorites2:', error);
-        showToast('お気に入り2への追加に失敗しました', 'error');
+        console.error('Failed to move to favorites:', error);
+        showToast('お気に入りへの追加に失敗しました', 'error');
+    } finally {
+        state.favoriteInFlight = false;
+        if (version === state.loadVersion) {
+            state.isLoading = state.loadedCount < state.totalCount;
+            if (state.isLoading) loadRemainingImages(version);
+            else hideLoading();
+        }
     }
 }
 

@@ -105,3 +105,70 @@ def test_large_directory_and_human_review_controls(tmp_path, monkeypatch):
     finally:
         http.shutdown()
         thread.join(timeout=5)
+
+
+def test_favorites_remove_current_and_advance(tmp_path, monkeypatch):
+    playwright = pytest.importorskip('playwright.sync_api')
+    directory = tmp_path / '2026-09-29'
+    directory.mkdir()
+    for index in range(65):
+        Image.new('RGB', (10, 10), 'red').save(directory / f'{index:03d}.png')
+    monkeypatch.setattr(server, 'api', server.RViewRemoteAPI(str(directory)))
+    http = make_server('127.0.0.1', 0, server.app, threaded=True)
+    thread = threading.Thread(target=http.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with playwright.sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(f'http://127.0.0.1:{http.server_port}/?mode=remote')
+            page.wait_for_function('state.images.length === 65 && !state.isLoading')
+            # An old batch must not restore a moved image or skip an offset.
+            page.evaluate('''() => {
+                const original = api.getImagesBatch.bind(api);
+                window.batchWaiting = false;
+                window.batchReturned = false;
+                api.getImagesBatch = async (start, count) => {
+                    const result = await original(start, count);
+                    if (start === 30 && !window.batchWaiting) {
+                        window.batchWaiting = true;
+                        await new Promise(resolve => setTimeout(resolve, 800));
+                        window.batchReturned = true;
+                    }
+                    return result;
+                };
+                loadImagesProgressively();
+            }''')
+            page.wait_for_function('window.batchWaiting')
+            page.keyboard.press('Insert')
+            page.wait_for_function('!state.favoriteInFlight && !state.isLoading && state.images.length === 64')
+            page.wait_for_function('window.batchReturned')
+            assert not (directory / '000.png').exists()
+            assert (tmp_path / '2026-09-29f' / '000.png').exists()
+            assert page.evaluate('state.images[state.currentIndex].name') == '001.png'
+            assert page.evaluate('state.images.map(i => i.name)') == [f'{i:03d}.png' for i in range(1, 65)]
+            page.keyboard.press('Shift+Insert')
+            page.wait_for_function('!state.favoriteInFlight && state.images.length === 63')
+            assert (tmp_path / '2026-09-29g' / '001.png').exists()
+            assert not (directory / '001.png').exists()
+            assert page.evaluate('state.images[state.currentIndex].name') == '002.png'
+            # A backend failure must keep the selected image.
+            page.evaluate('api.addToFavorites = async () => false')
+            page.keyboard.press('Insert')
+            page.wait_for_function('!state.favoriteInFlight')
+            assert page.evaluate('state.images.length') == 63
+            assert (directory / '002.png').exists()
+            # Last and only image: clear the stale original and leave viewer mode.
+            for path in directory.iterdir():
+                if path.name != '002.png':
+                    path.unlink()
+            page.evaluate('loadImagesProgressively()')
+            page.wait_for_function('state.images.length === 1 && !state.isLoading')
+            page.keyboard.press('Shift+Insert')
+            page.wait_for_function('!state.favoriteInFlight && state.images.length === 0')
+            assert page.evaluate('!state.isViewerMode && state.totalCount === 0 && state.loadedCount === 0')
+            assert list(directory.iterdir()) == []
+            browser.close()
+    finally:
+        http.shutdown()
+        thread.join(timeout=5)

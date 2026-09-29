@@ -5,7 +5,7 @@ RView is a small image viewer with two launch modes:
 - **Local desktop mode**: a PyWebView window backed by Python.
 - **Browser mode**: a local Flask server that serves the same web UI.
 
-It supports thumbnail browsing, fullscreen viewing, zoom and pan, auto-rotation for portrait/landscape mismatches, copying images to favorite folders, deleting images, opening adjacent folders, and keyboard shortcuts.
+It supports thumbnail browsing, fullscreen viewing, zoom and pan, auto-rotation for portrait/landscape mismatches, moving images to favorite folders, deleting images, opening adjacent folders, and keyboard shortcuts.
 
 Image lists contain metadata only. RView loads the displayed original on demand,
 and uses previews of at most 320 pixels near the visible thumbnail area. Images
@@ -76,6 +76,9 @@ The CLI exercises backend file operations without the UI:
 ./.venv/bin/python cli.py copy-clipboard --image path/to/images/sample.png
 ```
 
+`favorite` moves the image into the sibling folder suffixed with `f` (slot 1) or `g` (slot 2).
+An identical same-name file is kept and the source is removed; different content is moved with a numbered suffix (`_1`, `_2`, ...). The viewer removes the moved image from its list and advances.
+
 `copy-clipboard` only works on Windows.
 
 ## Windows EXE Build
@@ -107,8 +110,8 @@ PyInstaller does not cross-compile Windows executables from Linux. If you run Py
 | S / Down / Numpad 2 | Bad (-2), then next image |
 | Ctrl+Up / Ctrl+Numpad 5 | Slightly good (+1), then next image |
 | Ctrl+Down / Ctrl+Numpad 2 | Slightly bad (-1), then next image |
-| Insert | Copy to favorites |
-| Shift+Insert | Copy to favorites 2 |
+| Insert | Move to favorites |
+| Shift+Insert | Move to favorites 2 |
 | Ctrl+S | Save as |
 | Ctrl+C | Copy image to clipboard |
 | `[` | Open previous folder |

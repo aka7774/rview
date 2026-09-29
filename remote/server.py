@@ -6,7 +6,6 @@ RView Remote Server
 
 import argparse
 import io
-import shutil
 import sys
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -16,7 +15,7 @@ import threading
 import webbrowser
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rview_media import managed_image, record_rating, thumbnail_bytes
+from rview_media import move_to_favorites, managed_image, record_rating, thumbnail_bytes
 
 app = Flask(__name__,
     static_folder='../web',
@@ -101,14 +100,13 @@ class RViewRemoteAPI:
         return record_rating(self.image_dir, path, rating)
 
     def add_to_favorites(self, image_path: str) -> bool:
-        """画像をお気に入りフォルダにコピー"""
+        """画像をお気に入りフォルダに移動"""
         try:
             source_path = self._resolve_managed_image_path(image_path)
             if not source_path:
                 return False
-            dest_path = self._copy_to_favorites_if_missing(self.favorites_dir, source_path)
-            if dest_path is None:
-                return True
+            dest_path = move_to_favorites(source_path, self.favorites_dir)
+            self._update_image_files()
             print(f"Added to favorites: {source_path} -> {dest_path}")
             return True
 
@@ -117,14 +115,13 @@ class RViewRemoteAPI:
             return False
 
     def add_to_favorites2(self, image_path: str) -> bool:
-        """画像をお気に入り2フォルダにコピー"""
+        """画像をお気に入り2フォルダに移動"""
         try:
             source_path = self._resolve_managed_image_path(image_path)
             if not source_path:
                 return False
-            dest_path = self._copy_to_favorites_if_missing(self.favorites2_dir, source_path)
-            if dest_path is None:
-                return True
+            dest_path = move_to_favorites(source_path, self.favorites2_dir)
+            self._update_image_files()
             print(f"Added to favorites2: {source_path} -> {dest_path}")
             return True
 
@@ -216,17 +213,6 @@ class RViewRemoteAPI:
         """画像フォルダ名の末尾へ f/g を付けた隣接フォルダを設定する。"""
         self.favorites_dir = self.image_dir.with_name(f"{self.image_dir.name}f")
         self.favorites2_dir = self.image_dir.with_name(f"{self.image_dir.name}g")
-
-    def _copy_to_favorites_if_missing(
-        self, target_dir: Path, source_path: Path
-    ) -> Optional[Path]:
-        """同名ファイルが未登録の場合だけお気に入りへコピーする。"""
-        target_dir.mkdir(parents=True, exist_ok=True)
-        dest_path = target_dir / source_path.name
-        if dest_path.exists():
-            return None
-        shutil.copy2(source_path, dest_path)
-        return dest_path
 
     def _has_supported_images(self, target_dir: Path) -> bool:
         """対象フォルダに対応画像が1枚以上あるか"""
