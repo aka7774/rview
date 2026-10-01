@@ -39,6 +39,87 @@ For Windows executable builds, install the build extra:
 uv pip install -e ".[build]"
 ```
 
+## 作り直す
+
+These steps rebuild browser mode from source on Linux/WSL without reusing an
+existing virtual environment. Use Python 3.12 or newer, Git and `uv`; Chromium
+tests also need the OS libraries listed by Playwright's browser installer.
+On Windows, use `.venv\Scripts\python.exe` instead of `.venv/bin/python`.
+
+Clone this repository's Git remote into your chosen source directory, then
+create a new environment:
+
+```bash
+git clone <repository-url> rview
+cd rview
+uv venv --python 3.12
+uv pip install -e .
+uv pip check
+.venv/bin/python cli.py --help
+.venv/bin/python remote/server.py --help
+```
+
+The runtime dependencies are declared in `pyproject.toml`. There is no dependency
+lockfile: rebuilding resolves available versions subject to its lower bounds.
+The isolated Linux check on 2026-10-02 used Python 3.12.3, Flask 3.1.3,
+Pillow 12.3.0 and pywebview 6.2.1.
+
+Install test dependencies and the browser, then run the existing tests against
+synthetic images. `RVIEW_SCRATCH` must be a writable temporary directory outside
+your real image collection; remove it after the checks finish.
+
+```bash
+uv pip install pytest playwright
+export RVIEW_SCRATCH='<temporary-directory>'
+mkdir -p "$RVIEW_SCRATCH"
+export TMPDIR="$RVIEW_SCRATCH"
+export PLAYWRIGHT_BROWSERS_PATH="$RVIEW_SCRATCH/browsers"
+.venv/bin/python -m playwright install chromium
+.venv/bin/python -m pytest -q -p no:cacheprovider test --basetemp "$RVIEW_SCRATCH/pytest"
+```
+
+If Chromium reports missing system libraries, install the prerequisites for
+your OS before rerunning. Without Playwright, the two browser tests are skipped;
+that is only a backend check, not a complete browser verification.
+
+Restore the image collection from its external data storage or backup. Keep
+directory names and the sibling `f`/`g` favorite folders together, along with
+each directory's `rview-ratings.jsonl`. Those names and files carry the existing
+favorite and rating state. Keep collection data outside the source repository.
+Optional duplicate-maintenance TSVs also belong in external data storage;
+pass their restored location to `scripts/dedupe_favorites.py --ledger`, or
+restore a local symlink if an existing invocation uses `maintenance/`.
+No account, model, database or external generation service is required.
+
+Start with an empty folder or disposable sample images, then open the displayed
+loopback URL and check thumbnails, navigation and ratings:
+
+```bash
+.venv/bin/python remote/server.py <image-directory> --host 127.0.0.1 --port 5000 --no-browser
+```
+
+Use a different free port if 5000 is occupied. Stop this process with Ctrl+C
+when done. Favorite and deletion checks should use disposable copies because
+they change files. Use your restored collection only after the smoke check.
+
+For native desktop mode, Windows is the recommended target: install the same
+project into a Windows Python environment, then run `local/rview.py` with the
+image directory. Linux desktop mode additionally needs a working display and
+a pywebview GTK or Qt backend with its Python bindings; the base project install
+alone does not supply those bindings. The local script treats its first argument
+as a directory and does not implement `--help`.
+For Windows packaging, install `.[build]` in the Windows environment and follow
+the Windows EXE Build section and [WSL development notes](WSL_DEVELOPMENT.md).
+Executable outputs are disposable builds, not collection backups.
+
+The 2026-10-02 rebuild check covered a fresh Linux environment, backend tests,
+headless Chromium tests and loopback server startup with synthetic data.
+All 33 tests passed. Chromium's missing NSS/NSPR libraries were supplied from
+distribution packages in a temporary directory for that check; a new machine
+must provide these OS dependencies too.
+Native desktop startup, Windows clipboard/dialogs and Windows EXE rebuilding
+were not verified on that environment.
+
 ## Local Desktop Mode
 
 ```bash
