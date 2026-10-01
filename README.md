@@ -14,7 +14,9 @@ the previous folder. The window title includes the current folder name.
 
 Favorite slot 1 uses a sibling directory whose name is the selected image directory
 plus `f`; slot 2 uses the same rule with `g`. For example, images in `sample`
-are copied to `samplef` and `sampleg`. Adding the same file again is a no-op.
+are moved to `samplef` and `sampleg`. If an identical same-name file already
+exists there, it is kept and the source is removed. Different content with the
+same name receives a numbered suffix (`_1`, `_2`, ...).
 
 ## Requirements
 

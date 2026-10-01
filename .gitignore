@@ -52,3 +52,6 @@ dist/*.zip
 # Keep dist folder but ignore build outputs
 dist/*
 !dist/.gitkeep
+
+# Local maintenance ledgers can contain private image filenames.
+/maintenance/*.tsv
