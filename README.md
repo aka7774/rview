@@ -83,6 +83,23 @@ An identical same-name file is kept and the source is removed; different content
 
 `copy-clipboard` only works on Windows.
 
+### Cleaning up legacy favorite copies
+
+For collections created before favorites became moves, compare date folders
+with their sibling `f` and `g` folders:
+
+```bash
+python scripts/dedupe_favorites.py path/to/images --ledger maintenance/favorites.tsv
+python scripts/dedupe_favorites.py path/to/images --ledger maintenance/favorites.tsv --apply
+```
+
+The first command records matches without deleting files. Comparison uses file
+sizes, the first 1 MiB, then full SHA-256 hashes. The second command rechecks
+each match and removes only the date-folder copy; both favorite folders remain
+intact. Renamed identical images also match. Changed files and symlinks are kept.
+The same TSV records deletion results with Japan-time timestamps. Maintenance
+TSVs are ignored by Git because image filenames can be private.
+
 ## Windows EXE Build
 
 From Windows:
