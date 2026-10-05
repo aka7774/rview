@@ -354,6 +354,7 @@ function appendImageBatch(batch) {
     });
     const start = state.images.length;
     state.images.push(...added);
+    pumpImageCache();
     state.loadedCount = batch.loaded;
     appendThumbnails(added, start);
     updateSlider();
@@ -417,29 +418,100 @@ function pumpThumbnails() {
     }
 }
 
-let pendingMainImage = null;
-let loadingMainImage = false;
-let imageRequest = 0;
+// Decoded nodes are swapped only when ready. Reserve encoded and decoded memory.
+const imageCache = new Map();
+const cacheBudget = Math.min(1024, Math.max(64, (navigator.deviceMemory || 2) * 128)) * 1024 * 1024;
+let cacheBytes = 0;
+let cacheWorker = false;
+let cacheGeneration = 0;
+let displayedPath = null;
+const failedImages = new Set();
 function clearMainImage() {
-    imageRequest++;
-    pendingMainImage = null;
+    cacheGeneration++;
+    for (const entry of imageCache.values()) {
+        if (entry.node !== elements.mainImage) entry.node.removeAttribute('src');
+    }
+    imageCache.clear();
+    failedImages.clear();
+    cacheBytes = 0;
+    displayedPath = null;
     elements.mainImage.removeAttribute('src');
 }
-async function loadMainImage() {
-    if (loadingMainImage) return;
-    loadingMainImage = true;
-    try {
-        while (pendingMainImage) {
-            const request = pendingMainImage;
-            pendingMainImage = null;
-            try {
-                const src = await api.getImageSource(request.image);
-                if (request.id === imageRequest && state.isViewerMode) elements.mainImage.src = src;
-            } catch (error) {
-                if (request.id === imageRequest) showToast('画像を読み込めませんでした', 'error');
-            }
+function imageCost(image) {
+    return image.width * image.height * 8 + image.size * 4;
+}
+function cacheOrder() {
+    const center = state.currentIndex;
+    const order = [center, center + 1, center - 1];
+    for (let n = 2; n <= 30; n++) order.push(center + n);
+    for (let n = 2; n <= 100; n++) {
+        order.push(center - n);
+        if (n > 30) order.push(center + n);
+    }
+    return order.filter(i => i >= 0 && i < state.images.length);
+}
+function trimImageCache(wanted) {
+    for (const [path, entry] of imageCache) {
+        if (!wanted.has(path)) {
+            imageCache.delete(path);
+            cacheBytes -= entry.cost;
+            if (entry.node !== elements.mainImage) entry.node.removeAttribute('src');
         }
-    } finally { loadingMainImage = false; }
+    }
+}
+function presentImage(entry, image) {
+    if (displayedPath === image.file_path) return;
+    const previous = elements.mainImage;
+    entry.node.id = 'main-image';
+    previous.replaceWith(entry.node);
+    previous.removeAttribute('id');
+    elements.mainImage = entry.node;
+    displayedPath = image.file_path;
+    resetZoom();
+    checkAndRotate(image);
+}
+async function pumpImageCache() {
+    if (!state.isViewerMode || !state.images[state.currentIndex]) return;
+    const wanted = new Map();
+    let reserved = 0;
+    // Half remains available for the old visible image and decoder transition.
+    for (const index of cacheOrder().sort((a, b) => Math.abs(a - state.currentIndex) - Math.abs(b - state.currentIndex))) {
+        const image = state.images[index];
+        const cost = Math.min(imageCost(image), cacheBudget / 2);
+        if (reserved + cost > cacheBudget / 2) continue;
+        wanted.set(image.file_path, {image, cost});
+        reserved += cost;
+    }
+    trimImageCache(wanted);
+    const current = state.images[state.currentIndex];
+    const ready = imageCache.get(current.file_path);
+    if (ready) presentImage(ready, current);
+    if (cacheWorker) return;
+    const next = cacheOrder().map(i => wanted.get(state.images[i].file_path)).find(entry =>
+        entry && !imageCache.has(entry.image.file_path) && !failedImages.has(entry.image.file_path));
+    if (!next) return;
+    cacheWorker = true;
+    const generation = cacheGeneration;
+    const node = new Image();
+    node.decoding = 'async';
+    try {
+        node.src = await api.getImageSource(next.image, imageCost(next.image) > cacheBudget / 2);
+        await node.decode();
+        if (generation === cacheGeneration && state.isViewerMode) {
+            imageCache.set(next.image.file_path, {node, cost: next.cost});
+            cacheBytes += next.cost;
+        } else node.removeAttribute('src');
+    } catch (error) {
+        node.removeAttribute('src');
+        if (generation === cacheGeneration) {
+            failedImages.add(next.image.file_path);
+            if (state.images[state.currentIndex]?.file_path === next.image.file_path)
+                showToast('画像を読み込めませんでした', 'error');
+        }
+    } finally {
+        cacheWorker = false;
+        pumpImageCache();
+    }
 }
 
 // ローディング表示（タイトルバーに表示）
@@ -551,19 +623,13 @@ function showImage(index) {
     // トーストを即座に消す
     hideToast();
 
-    // 画像データを設定
-    clearMainImage();
-    pendingMainImage = {image, id: imageRequest};
-    loadMainImage();
+    // Keep the previous image visible until decoding completes.
+    pumpImageCache();
 
     // 情報を更新
     updateImageInfo();
 
-    // ズームをリセット
-    resetZoom();
 
-    // 自動回転の判定
-    checkAndRotate(image);
 
     // スライダーを更新
     updateSlider();
@@ -898,7 +964,6 @@ async function moveCurrentToFavorites(slot) {
             if (index < state.currentIndex) state.currentIndex--;
             renderThumbnails();
             updateImageCount();
-            clearMainImage();
             if (state.images.length) {
                 showImage(Math.min(state.currentIndex, state.images.length - 1));
             } else {
@@ -1277,7 +1342,7 @@ function setupEventListeners() {
     });
 
     // ドラッグ機能
-    elements.mainImage.addEventListener('mousedown', startDrag);
+    elements.imageContainer.addEventListener('mousedown', startDrag);
     document.addEventListener('mousemove', drag);
     document.addEventListener('mouseup', endDrag);
 

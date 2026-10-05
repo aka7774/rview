@@ -7,9 +7,16 @@ RView is a small image viewer with two launch modes:
 
 It supports thumbnail browsing, fullscreen viewing, zoom and pan, auto-rotation for portrait/landscape mismatches, moving images to favorite folders, deleting images, opening adjacent folders, and keyboard shortcuts.
 
-Image lists contain metadata only. RView loads the displayed original on demand,
-and uses previews of at most 320 pixels near the visible thumbnail area. Images
-outside that area are released. Folder changes discard unfinished responses from
+Image lists contain metadata only. The viewer retains decoded images up to 100
+positions on either side, prioritizing immediate neighbours and the next 30.
+A ready image replaces the displayed node immediately; on a cache miss the old
+image stays visible until decoding completes. The cache reserves encoded copies
+and decoded pixels against 1/8 of the browser-reported device memory (fallback
+256 MiB, maximum 1 GiB). Half is reserved for display/decode transitions. The
+nearest images fit first and distant entries are evicted. An individual image
+that exceeds the allowance uses a 320-pixel preview instead of its original.
+This is a conservative image allocation budget, not a limit on the entire OS
+process. Thumbnail previews are loaded only near the visible thumbnail area. Folder changes discard unfinished responses from
 the previous folder. The window title includes the current folder name.
 
 Favorite slot 1 uses a sibling directory whose name is the selected image directory
@@ -69,7 +76,7 @@ synthetic images. `RVIEW_SCRATCH` must be a writable temporary directory outside
 your real image collection; remove it after the checks finish.
 
 ```bash
-uv pip install pytest playwright
+uv pip install pytest playwright psutil
 export RVIEW_SCRATCH='<temporary-directory>'
 mkdir -p "$RVIEW_SCRATCH"
 export TMPDIR="$RVIEW_SCRATCH"
@@ -190,15 +197,41 @@ cd local
 build.bat
 ```
 
-The executable is written to `dist\RView.exe`. Build outputs are ignored by Git.
+Each successful build installs the only executable at
+`%LOCALAPPDATA%\Programs\RView\RView.exe` and registers folder and folder-background
+context menus for the current Windows user. No administrator rights are needed.
+The build fails without replacing the installed version if compilation fails;
+close RView yourself before rebuilding if Windows reports that it is in use.
+There is no viewer launch during building or registration.
 
-From WSL, call Windows PowerShell 7 and Windows Python/PyInstaller through the helper:
+From WSL (uses Windows Python/PyInstaller, including a WSL source checkout):
 
 ```bash
-RVIEW_WIN_DIR='<WINDOWS_REPO_PATH>\local' ./local/build_from_wsl.sh
+./local/build_from_wsl.sh
 ```
 
-PyInstaller does not cross-compile Windows executables from Linux. If you run PyInstaller inside WSL directly, it will create a Linux binary instead of a Windows `.exe`.
+Optional Windows build arguments: `-InstallDir 'D:\Apps\RView' -Python 'path\python.exe'`.
+Use the same installation directory on every rebuild. The intermediate executable
+is removed after installation. Build dependencies: `python -m pip install pyinstaller pywebview Pillow`.
+
+Register an existing installation or remove only RView's two menu entries:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File local\register-context-menu.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File local\unregister-context-menu.ps1
+```
+
+Registration accepts `-ExePath` for a custom location. Both scripts touch only
+`HKCU\Software\Classes\Directory[\Background]\shell\RView`. The command quotes
+the executable and selected folder, including paths with spaces and Japanese.
+Windows 11 shows these classic shell verbs under **Show more options**. A native
+first-menu extension requires a separate packaged shell extension; this build
+uses the simpler per-user registration.
+
+If keeping Send To, use a shortcut pointing at the installed executable instead
+of another executable copy. Remove old copies only after identifying their
+embedded web assets against this repository's history. Do not delete unknown
+executables merely because their filename matches.
 
 ## Keyboard Shortcuts
 

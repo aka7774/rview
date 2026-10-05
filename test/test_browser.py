@@ -17,10 +17,10 @@ def test_large_directory_and_human_review_controls(tmp_path, monkeypatch):
     second = tmp_path / 'b_next'
     first.mkdir()
     second.mkdir()
-    # 1,205 distinct paths to a 24 MiB bitmap; no private production images.
+    # 3,500 distinct paths to a 24 MiB bitmap; no private production images.
     original = first / '0000.bmp'
     Image.new('RGB', (4096, 2048), 'teal').save(original)
-    for index in range(1, 1205):
+    for index in range(1, 3500):
         os.link(original, first / f'{index:04d}.bmp')
     for index in range(3):
         Image.new('RGB', (100, 80), 'purple').save(second / f'{index}.png')
@@ -37,11 +37,26 @@ def test_large_directory_and_human_review_controls(tmp_path, monkeypatch):
             page.on('request', lambda request: originals.append(request.url)
                     if '/api/media?' in request.url and 'thumbnail=0' in request.url else None)
             page.goto(f'http://127.0.0.1:{http.server_port}/?mode=remote')
-            page.wait_for_function('state.images.length === 1205 && !state.isLoading')
+            page.wait_for_function('state.images.length === 3500 && !state.isLoading')
             page.wait_for_function('elements.mainImage.naturalWidth === 4096')
-            assert len(originals) == 1
+            assert 1 <= len(originals) <= 4
             assert page.evaluate('state.images.every(image => !image.data)')
             assert 'a_many' in page.title()
+            # Read large originals through repeated jumps; measure browser RSS as well
+            # as the cache's reservations (JS heap alone excludes decoded pixels).
+            import psutil
+            peak_rss = 0
+            for index in range(100, 1100, 25):
+                page.evaluate('(i) => showImage(i)', index)
+                page.wait_for_function('!cacheWorker && displayedPath === state.images[state.currentIndex].file_path')
+                assert page.evaluate('cacheBytes <= cacheBudget / 2 && imageCache.size <= 4')
+                rss = sum(p.memory_info().rss for p in psutil.Process().children(recursive=True)
+                          if p.is_running())
+                peak_rss = max(peak_rss, rss)
+            assert peak_rss < 2 * 1024**3
+            print({'large_original_peak_browser_rss_bytes': peak_rss})
+            page.evaluate('showImage(0)')
+            page.wait_for_function('!cacheWorker')
             # Thumbnail scrolling loads only small previews near the viewport.
             page.keyboard.press('Escape')
             page.wait_for_function('document.querySelectorAll(".thumbnail-item img[src]").length > 0')
@@ -50,7 +65,6 @@ def test_large_directory_and_human_review_controls(tmp_path, monkeypatch):
             loaded = page.locator('.thumbnail-item img[src]').count()
             assert 0 < loaded < 60
             page.wait_for_function('Array.from(document.querySelectorAll(".thumbnail-item img[src]")).every(i => i.complete && i.naturalWidth <= 320)')
-            assert len(originals) == 1
             page.evaluate('openViewer(0)')
             for key in ['w', 'Numpad2', 'Control+ArrowUp', 'Control+Numpad2']:
                 page.keyboard.press(key)
@@ -98,8 +112,8 @@ def test_large_directory_and_human_review_controls(tmp_path, monkeypatch):
             page.wait_for_function('!state.changingDirectory')
             assert page.evaluate('state.currentIndex') == 2
             assert not errors
-            print(json.dumps({'large_images': 1205, 'original_bytes_each': original.stat().st_size,
-                              'initial_original_requests': 1, 'visible_previews_after_scroll': loaded,
+            print(json.dumps({'large_images': 3500, 'original_bytes_each': original.stat().st_size,
+                              'original_requests': len(originals), 'visible_previews_after_scroll': loaded,
                               'rating_values': ratings, 'stale_batch_discarded': True, 'page_errors': errors}))
             browser.close()
     finally:
@@ -168,6 +182,65 @@ def test_favorites_remove_current_and_advance(tmp_path, monkeypatch):
             page.wait_for_function('!state.favoriteInFlight && state.images.length === 0')
             assert page.evaluate('!state.isViewerMode && state.totalCount === 0 && state.loadedCount === 0')
             assert list(directory.iterdir()) == []
+            browser.close()
+    finally:
+        http.shutdown()
+        thread.join(timeout=5)
+
+
+def test_prefetch_window_no_blank_and_memory_bound(tmp_path, monkeypatch):
+    playwright = pytest.importorskip('playwright.sync_api')
+    directory = tmp_path / 'synthetic'
+    directory.mkdir()
+    original = directory / '0000.png'
+    Image.new('RGB', (320, 240), 'teal').save(original)
+    for index in range(1, 3500):
+        os.link(original, directory / f'{index:04d}.png')
+    monkeypatch.setattr(server, 'api', server.RViewRemoteAPI(str(directory)))
+    http = make_server('127.0.0.1', 0, server.app, threaded=True)
+    thread = threading.Thread(target=http.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with playwright.sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            page = browser.new_page()
+            errors = []
+            page.on('pageerror', lambda error: errors.append(str(error)))
+            page.goto(f'http://127.0.0.1:{http.server_port}/?mode=remote')
+            page.wait_for_function('state.images.length === 3500 && !state.isLoading && !cacheWorker')
+            assert page.evaluate('imageCache.size') == 101
+            page.evaluate('showImage(150)')
+            page.wait_for_function('!cacheWorker && imageCache.size === 201')
+            # Cache hits replace the decoded node synchronously, without another request.
+            assert page.evaluate('''() => {
+                for (const index of [151, 150, 149, 150]) {
+                    showImage(index);
+                    if (displayedPath !== state.images[index].file_path ||
+                        !elements.mainImage.complete || !elements.mainImage.naturalWidth) return false;
+                }
+                return true;
+            }''')
+            # On a miss keep the previous image until the delayed decode has completed.
+            page.evaluate('''() => {
+                window.previousNode = elements.mainImage;
+                const original = api.getImageSource.bind(api);
+                api.getImageSource = async (...args) => {
+                    await new Promise(resolve => setTimeout(resolve, 15));
+                    return original(...args);
+                };
+                showImage(3200);
+            }''')
+            assert page.evaluate('elements.mainImage === window.previousNode && elements.mainImage.naturalWidth > 0')
+            page.wait_for_function('displayedPath === state.images[3200].file_path')
+            # Repeated distant jumps cannot accumulate decoded images or old responses.
+            for index in range(100, 3400, 150):
+                page.evaluate('(i) => showImage(i)', index)
+                page.wait_for_function('displayedPath === state.images[state.currentIndex].file_path')
+                assert page.evaluate('cacheBytes <= cacheBudget / 2 && imageCache.size <= 201')
+            page.wait_for_function('!cacheWorker')
+            assert page.evaluate('''[...imageCache.keys()].every(path =>
+                Math.abs(state.images.findIndex(i => i.file_path === path) - state.currentIndex) <= 100)''')
+            assert not errors
             browser.close()
     finally:
         http.shutdown()
