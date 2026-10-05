@@ -210,6 +210,20 @@ From WSL (uses Windows Python/PyInstaller, including a WSL source checkout):
 ./local/build_from_wsl.sh
 ```
 
+Preview the build/install/registration without compiling or changing files or
+registry values: `./local/build_from_wsl.sh -DryRun`. To verify compilation
+without updating an existing installation, run `./local/build_from_wsl.sh -BuildOnly`;
+the resulting executable stays at `local/dist/RView.exe`. A normal build still
+updates the established installation and removes the intermediate executable.
+Registration and removal scripts also accept `-DryRun` (registration permits a
+not-yet-built executable path in this mode).
+
+Headless Windows script checks (no viewer is launched):
+
+```powershell
+python -m unittest discover -s test -p test_windows_packaging.py -v
+```
+
 Optional Windows build arguments: `-InstallDir 'D:\Apps\RView' -Python 'path\python.exe'`.
 Use the same installation directory on every rebuild. The intermediate executable
 is removed after installation. Build dependencies: `python -m pip install pyinstaller pywebview Pillow`.
@@ -223,7 +237,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File local\unregister-context-men
 
 Registration accepts `-ExePath` for a custom location. Both scripts touch only
 `HKCU\Software\Classes\Directory[\Background]\shell\RView`. The command quotes
-the executable and selected folder, including paths with spaces and Japanese.
+the executable and selected folder, including paths with spaces, Japanese,
+apostrophes and brackets. A `\.` suffix protects roots and folders ending in a
+backslash from Windows command-line quote escaping. Literal double quotes are
+not valid Windows folder-name characters; enclosing command-line quotes are
+handled by Windows before Python receives the argument.
 Windows 11 shows these classic shell verbs under **Show more options**. A native
 first-menu extension requires a separate packaged shell extension; this build
 uses the simpler per-user registration.
