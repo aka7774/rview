@@ -17,7 +17,10 @@ nearest images fit first and distant entries are evicted. An individual image
 that exceeds the allowance uses a 320-pixel preview instead of its original.
 This is a conservative image allocation budget, not a limit on the entire OS
 process. Thumbnail previews are loaded only near the visible thumbnail area. Folder changes discard unfinished responses from
-the previous folder. The window title includes the current folder name.
+the previous folder and release its decoded nodes. Reads are checked again after
+source retrieval and decoding, so a reversal cannot admit an image outside the
+current window. Desktop source calls remain serialized until a stale call returns.
+The window title includes the current folder name.
 
 Favorite slot 1 uses a sibling directory whose name is the selected image directory
 plus `f`; slot 2 uses the same rule with `g`. For example, images in `sample`

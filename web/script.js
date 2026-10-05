@@ -422,12 +422,15 @@ function pumpThumbnails() {
 const imageCache = new Map();
 const cacheBudget = Math.min(1024, Math.max(64, (navigator.deviceMemory || 2) * 128)) * 1024 * 1024;
 let cacheBytes = 0;
-let cacheWorker = false;
+let cacheWorker = null;
 let cacheGeneration = 0;
 let displayedPath = null;
 const failedImages = new Set();
 function clearMainImage() {
     cacheGeneration++;
+    // Stop an old decoder immediately; an outstanding desktop RPC is serialized
+    // until it returns, then discarded before assigning its source.
+    if (cacheWorker) cacheWorker.node.removeAttribute('src');
     for (const entry of imageCache.values()) {
         if (entry.node !== elements.mainImage) entry.node.removeAttribute('src');
     }
@@ -467,11 +470,13 @@ function presentImage(entry, image) {
     previous.removeAttribute('id');
     elements.mainImage = entry.node;
     displayedPath = image.file_path;
+    // The old visible node may already have been evicted during a cache miss.
+    if (![...imageCache.values()].some(cached => cached.node === previous))
+        previous.removeAttribute('src');
     resetZoom();
     checkAndRotate(image);
 }
-async function pumpImageCache() {
-    if (!state.isViewerMode || !state.images[state.currentIndex]) return;
+function wantedImages() {
     const wanted = new Map();
     let reserved = 0;
     // Half remains available for the old visible image and decoder transition.
@@ -482,6 +487,11 @@ async function pumpImageCache() {
         wanted.set(image.file_path, {image, cost});
         reserved += cost;
     }
+    return wanted;
+}
+async function pumpImageCache() {
+    if (!state.isViewerMode || !state.images[state.currentIndex]) return;
+    const wanted = wantedImages();
     trimImageCache(wanted);
     const current = state.images[state.currentIndex];
     const ready = imageCache.get(current.file_path);
@@ -490,26 +500,37 @@ async function pumpImageCache() {
     const next = cacheOrder().map(i => wanted.get(state.images[i].file_path)).find(entry =>
         entry && !imageCache.has(entry.image.file_path) && !failedImages.has(entry.image.file_path));
     if (!next) return;
-    cacheWorker = true;
     const generation = cacheGeneration;
     const node = new Image();
+    const worker = {node, generation};
+    cacheWorker = worker;
     node.decoding = 'async';
     try {
-        node.src = await api.getImageSource(next.image, imageCost(next.image) > cacheBudget / 2);
+        const source = await api.getImageSource(next.image, imageCost(next.image) > cacheBudget / 2);
+        // Navigation can change while the source RPC or decoding is in flight.
+        if (generation !== cacheGeneration || !state.isViewerMode ||
+            !wantedImages().has(next.image.file_path)) return;
+        node.src = source;
         await node.decode();
-        if (generation === cacheGeneration && state.isViewerMode) {
+        const latest = wantedImages();
+        if (generation === cacheGeneration && state.isViewerMode &&
+            latest.has(next.image.file_path)) {
+            trimImageCache(latest);
             imageCache.set(next.image.file_path, {node, cost: next.cost});
             cacheBytes += next.cost;
         } else node.removeAttribute('src');
     } catch (error) {
         node.removeAttribute('src');
-        if (generation === cacheGeneration) {
+        if (generation === cacheGeneration && state.isViewerMode &&
+            wantedImages().has(next.image.file_path)) {
             failedImages.add(next.image.file_path);
             if (state.images[state.currentIndex]?.file_path === next.image.file_path)
                 showToast('画像を読み込めませんでした', 'error');
         }
     } finally {
-        cacheWorker = false;
+        if (!imageCache.has(next.image.file_path) || generation !== cacheGeneration)
+            node.removeAttribute('src');
+        if (cacheWorker === worker) cacheWorker = null;
         pumpImageCache();
     }
 }

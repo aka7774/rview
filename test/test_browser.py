@@ -245,3 +245,111 @@ def test_prefetch_window_no_blank_and_memory_bound(tmp_path, monkeypatch):
     finally:
         http.shutdown()
         thread.join(timeout=5)
+
+
+def test_prefetch_discards_reversed_and_old_folder_reads(tmp_path, monkeypatch):
+    playwright = pytest.importorskip('playwright.sync_api')
+    first, second = tmp_path / 'a_first', tmp_path / 'b_second'
+    first.mkdir()
+    second.mkdir()
+    for directory, count in [(first, 260), (second, 3)]:
+        for index in range(count):
+            Image.new('RGB', (32, 24), (index % 256, 40, 80)).save(directory / f'{index:03d}.png')
+    monkeypatch.setattr(server, 'api', server.RViewRemoteAPI(str(first)))
+    http = make_server('127.0.0.1', 0, server.app, threaded=True)
+    thread = threading.Thread(target=http.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with playwright.sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(f'http://127.0.0.1:{http.server_port}/?mode=remote')
+            page.wait_for_function('state.images.length === 260 && !cacheWorker && !state.isLoading')
+            page.evaluate('''() => {
+                window.cacheViolations = [];
+                const insert = imageCache.set.bind(imageCache);
+                imageCache.set = (path, entry) => {
+                    const wanted = wantedImages();
+                    if (!wanted.has(path) || imageCache.size >= 201 ||
+                        cacheBytes + entry.cost > cacheBudget / 2)
+                        window.cacheViolations.push(path);
+                    return insert(path, entry);
+                };
+                window.realSource = api.getImageSource.bind(api);
+                window.holdNextSource = () => {
+                    let held = false;
+                    api.getImageSource = async (...args) => {
+                        const source = await window.realSource(...args);
+                        if (!held) {
+                            held = true;
+                            window.heldNode = cacheWorker.node;
+                            await new Promise(resolve => { window.releaseSource = resolve; });
+                        }
+                        return source;
+                    };
+                };
+                holdNextSource();
+                showImage(250);
+            }''')
+            page.wait_for_function('!!window.releaseSource')
+            page.evaluate('''() => {
+                showImage(0);
+                window.releaseSource();
+            }''')
+            page.wait_for_function('!cacheWorker && displayedPath === state.images[0].file_path')
+            assert page.evaluate('!window.heldNode.hasAttribute("src")')
+            assert page.evaluate('window.cacheViolations.length === 0 && imageCache.size === 101')
+            # Reverse again while decode itself is suspended, after the source arrived.
+            page.evaluate('''() => {
+                window.realDecode = HTMLImageElement.prototype.decode;
+                let held = false;
+                HTMLImageElement.prototype.decode = async function() {
+                    await window.realDecode.call(this);
+                    if (!held) {
+                        held = true;
+                        window.decodingNode = this;
+                        await new Promise(resolve => { window.releaseDecode = resolve; });
+                    }
+                };
+                showImage(250);
+            }''')
+            page.wait_for_function('!!window.releaseDecode')
+            page.evaluate('''() => {
+                showImage(0);
+                window.releaseDecode();
+                HTMLImageElement.prototype.decode = window.realDecode;
+            }''')
+            page.wait_for_function('!cacheWorker && displayedPath === state.images[0].file_path')
+            assert page.evaluate('!window.decodingNode.hasAttribute("src") && window.cacheViolations.length === 0')
+            # A source RPC from the old folder must never start decoding in the new one.
+            page.evaluate('''() => {
+                window.releaseSource = null;
+                holdNextSource();
+                showImage(250);
+            }''')
+            page.wait_for_function('!!window.releaseSource')
+            page.keyboard.press(']')
+            page.wait_for_function('state.directory.endsWith("b_second") && !state.changingDirectory')
+            assert page.evaluate('imageCache.size === 0 && cacheBytes === 0 && !window.heldNode.hasAttribute("src")')
+            page.evaluate('window.releaseSource()')
+            page.wait_for_function('!cacheWorker && imageCache.size === 3')
+            assert page.evaluate('''[...imageCache.keys()].every(path => path.includes('b_second')) &&
+                displayedPath === state.images[0].file_path && !window.heldNode.hasAttribute('src')''')
+            # An oversize decoded allocation selects a bounded preview.
+            page.evaluate('''() => {
+                clearMainImage();
+                state.images[0].width = state.images[0].height = 100000;
+                window.previewRequested = false;
+                api.getImageSource = async (image, thumbnail) => {
+                    if (image === state.images[0]) window.previewRequested = thumbnail;
+                    return window.realSource(image, thumbnail);
+                };
+                showImage(0);
+            }''')
+            page.wait_for_function('!cacheWorker && displayedPath === state.images[0].file_path')
+            assert page.evaluate('window.previewRequested && elements.mainImage.naturalWidth <= 320 && cacheBytes <= cacheBudget / 2')
+            assert page.evaluate('window.cacheViolations.length === 0')
+            browser.close()
+    finally:
+        http.shutdown()
+        thread.join(timeout=5)
