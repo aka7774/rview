@@ -15,6 +15,10 @@ and decoded pixels against 1/8 of the browser-reported device memory (fallback
 256 MiB, maximum 1 GiB). Half is reserved for display/decode transitions. The
 nearest images fit first and distant entries are evicted. An individual image
 that exceeds the allowance uses a 320-pixel preview instead of its original.
+A single prefetch worker discards responses that are no longer wanted after
+a jump or folder change. An evicted display keeps its pixels until replacement
+is ready, then releases its source. Failed images do not reserve cache space,
+so neighbouring images can still load and navigation can continue.
 This is a conservative image allocation budget, not a limit on the entire OS
 process. Thumbnail previews are loaded only near the visible thumbnail area. Folder changes discard unfinished responses from
 the previous folder. The window title includes the current folder name.

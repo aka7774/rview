@@ -245,3 +245,85 @@ def test_prefetch_window_no_blank_and_memory_bound(tmp_path, monkeypatch):
     finally:
         http.shutdown()
         thread.join(timeout=5)
+
+
+def test_prefetch_releases_displaced_nodes_and_recovers_from_corruption(tmp_path, monkeypatch):
+    playwright = pytest.importorskip('playwright.sync_api')
+    directory = tmp_path / 'memory-fixtures'
+    directory.mkdir()
+    # Highly compressed originals must be budgeted by decoded dimensions.
+    Image.new('RGB', (4096, 4096), 'teal').save(directory / '000.png')
+    for index in range(1, 240):
+        Image.new('RGB', (32, 24), 'purple').save(directory / f'{index:03d}.png')
+    monkeypatch.setattr(server, 'api', server.RViewRemoteAPI(str(directory)))
+    http = make_server('127.0.0.1', 0, server.app, threaded=True)
+    thread = threading.Thread(target=http.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with playwright.sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            page = browser.new_page()
+            # Minimum supported device-memory allowance: 64 MiB, half for cache.
+            page.add_init_script("Object.defineProperty(navigator, 'deviceMemory', {get: () => 0.5})")
+            page.goto(f'http://127.0.0.1:{http.server_port}/?mode=remote')
+            page.wait_for_function('state.images.length === 240 && !state.isLoading && !cacheWorker')
+            assert page.evaluate('cacheBudget') == 64 * 1024**2
+            assert page.evaluate('elements.mainImage.naturalWidth') == 320
+            assert page.evaluate('imageCost(state.images[0]) > cacheBudget && state.images[0].size < 100000')
+            page.evaluate('''() => {
+                window.oldDisplay = elements.mainImage;
+                window.sourceCalls = [];
+                window.activeSources = 0;
+                window.maxSources = 0;
+                const original = api.getImageSource.bind(api);
+                api.getImageSource = async (image, thumbnail) => {
+                    sourceCalls.push(image.file_path);
+                    maxSources = Math.max(maxSources, ++activeSources);
+                    try {
+                        if (image === state.images[239])
+                            await new Promise(resolve => { window.releaseSource = resolve; });
+                        if (image === state.images[120]) return 'data:image/png;base64,YnJva2Vu';
+                        return await original(image, thumbnail);
+                    } finally { activeSources--; }
+                };
+                showImage(239);
+            }''')
+            page.wait_for_function('!!window.releaseSource')
+            assert page.evaluate('elements.mainImage === oldDisplay && oldDisplay.naturalWidth > 0')
+            # Many direction reversals while a single source is pending must not
+            # create extra workers. The final selection makes that response stale.
+            page.evaluate('''() => {
+                for (let i = 0; i < 100; i++) showImage(i % 2 ? 130 : 239);
+                showImage(120);
+            }''')
+            assert page.evaluate('sourceCalls.length') == 1
+            page.evaluate('releaseSource()')
+            page.wait_for_function('!cacheWorker')
+            assert page.evaluate('maxSources') == 1
+            assert page.evaluate('failedImages.has(state.images[120].file_path)')
+            assert page.evaluate('!imageCache.has(state.images[239].file_path)')
+            assert page.evaluate('elements.mainImage === oldDisplay && oldDisplay.naturalWidth > 0')
+            # Corruption must not stop valid neighbours from decoding or navigation.
+            assert page.evaluate('imageCache.has(state.images[121].file_path)')
+            page.evaluate('nextImage()')
+            assert page.evaluate('displayedPath === state.images[121].file_path')
+            assert page.evaluate('!oldDisplay.hasAttribute("src")')
+            assert page.evaluate('cacheBytes <= cacheBudget / 2 && imageCache.size <= 201')
+            assert page.evaluate('''[...imageCache.values()].every(entry =>
+                entry.cost >= entry.node.naturalWidth * entry.node.naturalHeight * 4)''')
+            # A failed giant reservation must not consume the whole prefetch window.
+            page.evaluate('''() => {
+                clearMainImage();
+                api.getImageSource = async (image, thumbnail) => image === state.images[0]
+                    ? 'data:image/png;base64,YnJva2Vu'
+                    : `/api/media?path=${encodeURIComponent(image.file_path)}&thumbnail=${thumbnail ? 1 : 0}`;
+                showImage(0);
+            }''')
+            page.wait_for_function('!cacheWorker')
+            assert page.evaluate('failedImages.has(state.images[0].file_path) && imageCache.size === 100')
+            page.evaluate('nextImage()')
+            assert page.evaluate('displayedPath === state.images[1].file_path')
+            browser.close()
+    finally:
+        http.shutdown()
+        thread.join(timeout=5)

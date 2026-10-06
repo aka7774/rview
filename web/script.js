@@ -462,26 +462,34 @@ function trimImageCache(wanted) {
 function presentImage(entry, image) {
     if (displayedPath === image.file_path) return;
     const previous = elements.mainImage;
+    const previousPath = displayedPath;
     entry.node.id = 'main-image';
     previous.replaceWith(entry.node);
     previous.removeAttribute('id');
     elements.mainImage = entry.node;
+    // A cache miss keeps the old display alive only until its replacement is ready.
+    if (imageCache.get(previousPath)?.node !== previous) previous.removeAttribute('src');
     displayedPath = image.file_path;
     resetZoom();
     checkAndRotate(image);
 }
-async function pumpImageCache() {
-    if (!state.isViewerMode || !state.images[state.currentIndex]) return;
+function wantedImages() {
     const wanted = new Map();
     let reserved = 0;
     // Half remains available for the old visible image and decoder transition.
     for (const index of cacheOrder().sort((a, b) => Math.abs(a - state.currentIndex) - Math.abs(b - state.currentIndex))) {
         const image = state.images[index];
+        if (failedImages.has(image.file_path)) continue;
         const cost = Math.min(imageCost(image), cacheBudget / 2);
         if (reserved + cost > cacheBudget / 2) continue;
         wanted.set(image.file_path, {image, cost});
         reserved += cost;
     }
+    return wanted;
+}
+async function pumpImageCache() {
+    if (!state.isViewerMode || !state.images[state.currentIndex]) return;
+    const wanted = wantedImages();
     trimImageCache(wanted);
     const current = state.images[state.currentIndex];
     const ready = imageCache.get(current.file_path);
@@ -495,9 +503,14 @@ async function pumpImageCache() {
     const node = new Image();
     node.decoding = 'async';
     try {
-        node.src = await api.getImageSource(next.image, imageCost(next.image) > cacheBudget / 2);
+        const stillWanted = () => generation === cacheGeneration && state.isViewerMode &&
+            wantedImages().has(next.image.file_path);
+        const src = await api.getImageSource(next.image, imageCost(next.image) > cacheBudget / 2);
+        // A desktop response can arrive after a jump or a folder change.
+        if (!stillWanted()) return;
+        node.src = src;
         await node.decode();
-        if (generation === cacheGeneration && state.isViewerMode) {
+        if (stillWanted()) {
             imageCache.set(next.image.file_path, {node, cost: next.cost});
             cacheBytes += next.cost;
         } else node.removeAttribute('src');
