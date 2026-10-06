@@ -18,6 +18,7 @@ that exceeds the allowance uses a 320-pixel preview instead of its original.
 This is a conservative image allocation budget, not a limit on the entire OS
 process. Thumbnail previews are loaded only near the visible thumbnail area. Folder changes discard unfinished responses from
 the previous folder. The window title includes the current folder name.
+Headless cache regression and build reproduction: [prefetch validation](docs/prefetch-validation.md).
 
 Favorite slot 1 uses a sibling directory whose name is the selected image directory
 plus `f`; slot 2 uses the same rule with `g`. For example, images in `sample`

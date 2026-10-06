@@ -245,3 +245,79 @@ def test_prefetch_window_no_blank_and_memory_bound(tmp_path, monkeypatch):
     finally:
         http.shutdown()
         thread.join(timeout=5)
+
+
+def test_oversized_preview_and_stale_sources(tmp_path, monkeypatch):
+    """A delayed decoded source must survive neither reversal nor folder change."""
+    playwright = pytest.importorskip('playwright.sync_api')
+    first, second = tmp_path / 'a_huge', tmp_path / 'b_next'
+    first.mkdir()
+    second.mkdir()
+    Image.new('RGB', (6000, 6000), 'teal').save(first / '000.png')
+    for name in ('001.png', '002.png'):
+        Image.new('RGB', (100, 80), 'red').save(first / name)
+    Image.new('RGB', (120, 90), 'purple').save(second / '000.png')
+    monkeypatch.setattr(server, 'api', server.RViewRemoteAPI(str(first)))
+    http = make_server('127.0.0.1', 0, server.app, threaded=True)
+    thread = threading.Thread(target=http.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with playwright.sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            page = browser.new_page()
+            # Fix the image budget at 256 MiB regardless of host memory.
+            page.add_init_script("Object.defineProperty(navigator, 'deviceMemory', {get: () => 2})")
+            errors = []
+            page.on('pageerror', lambda error: errors.append(str(error)))
+            page.goto(f'http://127.0.0.1:{http.server_port}/?mode=remote')
+            page.wait_for_function('!state.isLoading && !cacheWorker && elements.mainImage.naturalWidth > 0')
+            assert page.evaluate('cacheBudget') == 256 * 1024**2
+            assert page.evaluate('imageCost(state.images[0]) > cacheBudget / 2')
+            assert page.evaluate('elements.mainImage.naturalWidth') == 320
+            assert page.evaluate('cacheBytes <= cacheBudget / 2')
+            page.evaluate('''() => {
+                const original = api.getImageSource.bind(api);
+                window.delayPath = state.images[1].file_path;
+                window.sourceWaiting = false;
+                window.presentations = [];
+                const present = presentImage;
+                presentImage = (entry, image) => {
+                    window.presentations.push([image.file_path, state.images[state.currentIndex].file_path]);
+                    return present(entry, image);
+                };
+                api.getImageSource = async (image, thumbnail) => {
+                    const source = await original(image, thumbnail);
+                    if (image.file_path === window.delayPath) {
+                        window.delayPath = null;
+                        window.sourceWaiting = true;
+                        await new Promise(resolve => { window.releaseSource = resolve; });
+                    }
+                    return source;
+                };
+                showImage(1);
+            }''')
+            page.wait_for_function('window.sourceWaiting')
+            # Reverse while the next image's response is held: the huge current
+            # image remains visible, and the delayed neighbour cannot replace it.
+            page.evaluate('showImage(2); showImage(0); window.releaseSource()')
+            page.wait_for_function('!cacheWorker')
+            assert page.evaluate('displayedPath === state.images[0].file_path && elements.mainImage.naturalWidth === 320')
+            assert page.evaluate('cacheBytes <= cacheBudget / 2')
+            page.evaluate('''() => {
+                window.delayPath = state.images[1].file_path;
+                window.sourceWaiting = false;
+                showImage(1);
+            }''')
+            page.wait_for_function('window.sourceWaiting')
+            page.keyboard.press(']')
+            page.wait_for_function('state.directory.endsWith("b_next") && !state.isLoading && !state.changingDirectory')
+            page.evaluate('window.releaseSource()')
+            page.wait_for_function('!cacheWorker && displayedPath === state.images[0].file_path && elements.mainImage.naturalWidth === 120')
+            assert page.evaluate('[...imageCache.keys()].every(path => path.includes("b_next"))')
+            assert page.evaluate('cacheBytes <= cacheBudget / 2 && imageCache.size === 1')
+            assert page.evaluate('window.presentations.every(([actual, selected]) => actual === selected)')
+            assert not errors
+            browser.close()
+    finally:
+        http.shutdown()
+        thread.join(timeout=5)
