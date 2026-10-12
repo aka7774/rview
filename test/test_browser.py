@@ -327,3 +327,40 @@ def test_prefetch_releases_displaced_nodes_and_recovers_from_corruption(tmp_path
     finally:
         http.shutdown()
         thread.join(timeout=5)
+
+
+def test_rotation_animates_only_once_and_marks_title(tmp_path, monkeypatch):
+    playwright = pytest.importorskip('playwright.sync_api')
+    directory = tmp_path / 'tall'
+    directory.mkdir()
+    for index in range(3):
+        Image.new('RGB', (60, 120), 'orange').save(directory / f'{index}.png')
+    Image.new('RGB', (120, 60), 'blue').save(directory / '3.png')
+    monkeypatch.setattr(server, 'api', server.RViewRemoteAPI(str(directory)))
+    http = make_server('127.0.0.1', 0, server.app, threaded=True)
+    thread = threading.Thread(target=http.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with playwright.sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            page = browser.new_page(viewport={'width': 1280, 'height': 800})
+            page.goto(f'http://127.0.0.1:{http.server_port}/?mode=remote')
+            page.wait_for_function('state.images.length === 4 && !state.isLoading')
+            page.wait_for_function("displayedPath === state.images[0].file_path")
+            # The first rotated image of the session turns with the transition.
+            assert page.evaluate('rotationIntroduced')
+            assert page.evaluate("getComputedStyle(elements.mainImage).transitionDuration") != '0s'
+            assert page.title().find('[R] 0.png') >= 0
+            # Later rotated images appear already turned: the transform is final at once.
+            page.evaluate('showImage(1)')
+            page.wait_for_function("displayedPath === state.images[1].file_path")
+            assert page.evaluate('''() => elements.mainImage.getAnimations().length''') == 0
+            assert page.evaluate("elements.mainImage.classList.contains('rotated')")
+            assert '[R] 1.png' in page.title()
+            page.evaluate('showImage(3)')
+            page.wait_for_function("displayedPath === state.images[3].file_path")
+            assert not page.evaluate("elements.mainImage.classList.contains('rotated')")
+            assert '[R]' not in page.title()
+            browser.close()
+    finally:
+        http.shutdown()

@@ -55,6 +55,8 @@ uv pip install -e ".[build]"
 These steps rebuild browser mode from source on Linux/WSL without reusing an
 existing virtual environment. Use Python 3.12 or newer, Git and `uv`; Chromium
 tests also need the OS libraries listed by Playwright's browser installer.
+Without root, `apt-get download libnspr4 libnss3`, unpack them with `dpkg -x` into a
+temporary directory and point `LD_LIBRARY_PATH` at its `usr/lib/x86_64-linux-gnu`.
 On Windows, use `.venv\Scripts\python.exe` instead of `.venv/bin/python`.
 
 Clone this repository's Git remote into your chosen source directory, then

@@ -137,6 +137,10 @@ body {
     transition: none;
 }
 
+#main-image.instant {
+    transition: none;
+}
+
 /* 回転は JavaScript の applyZoom() 関数で管理 */
 
 /* メニュー */

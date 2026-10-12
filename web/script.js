@@ -470,8 +470,20 @@ function presentImage(entry, image) {
     // A cache miss keeps the old display alive only until its replacement is ready.
     if (imageCache.get(previousPath)?.node !== previous) previous.removeAttribute('src');
     displayedPath = image.file_path;
+    // Each image has its own node, so a rotated one would animate from upright on every switch.
+    // Only the first rotation of the session is animated; later ones appear already turned.
+    const node = entry.node;
+    const intro = !rotationIntroduced && shouldRotate(image);
+    node.classList.add('instant');
+    node.classList.remove('rotated');
     resetZoom();
-    checkAndRotate(image);
+    if (!intro) checkAndRotate(image);
+    void node.offsetWidth;
+    node.classList.remove('instant');
+    if (intro) {
+        rotationIntroduced = true;
+        checkAndRotate(image);
+    }
 }
 function wantedImages() {
     const wanted = new Map();
@@ -652,25 +664,24 @@ function showImage(index) {
     updateWatchingState();
 }
 
+let rotationIntroduced = false;
+
+// モニタが横長(>1)で画像が縦長(<1)、またはその逆の場合に回転
+function shouldRotate(image) {
+    const container = elements.imageContainer;
+    const screenAspect = container.clientWidth / container.clientHeight;
+    const imageAspect = image.width / image.height;
+    return state.autoRotate && ((screenAspect > 1 && imageAspect < 1) ||
+                                (screenAspect < 1 && imageAspect > 1));
+}
+
 // 自動回転の判定と適用
 function checkAndRotate(image) {
     const container = elements.imageContainer;
     const containerWidth = container.clientWidth;
     const containerHeight = container.clientHeight;
-    const screenAspect = containerWidth / containerHeight;
-    const imageAspect = image.width / image.height;
 
-    if (!state.autoRotate) {
-        elements.mainImage.classList.remove('rotated');
-        applyFitToScreen(image.width, image.height, containerWidth, containerHeight, false);
-        return;
-    }
-
-    // モニタが横長(>1)で画像が縦長(<1)、またはその逆の場合に回転
-    const shouldRotate = (screenAspect > 1 && imageAspect < 1) ||
-                         (screenAspect < 1 && imageAspect > 1);
-
-    if (shouldRotate) {
+    if (shouldRotate(image)) {
         elements.mainImage.classList.add('rotated');
         // 回転時は幅と高さが入れ替わる
         applyFitToScreen(image.height, image.width, containerWidth, containerHeight, true);
@@ -746,7 +757,8 @@ function updateWindowTitleForImage() {
     // 実際の表示倍率 = 基本表示倍率 × ズーム倍率
     const actualScale = state.displayScale * state.zoom;
     const scalePercent = Math.round(actualScale * 100);
-    const title = `${image.name} - ${image.width}x${image.height} - ${state.currentIndex + 1}/${state.images.length} - ${scalePercent}% - RView`;
+    const rotated = shouldRotate(image) ? '[R] ' : '';
+    const title = `${rotated}${image.name} - ${image.width}x${image.height} - ${state.currentIndex + 1}/${state.images.length} - ${scalePercent}% - RView`;
     updateWindowTitle(title);
 }
 
