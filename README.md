@@ -59,7 +59,7 @@ libraries must be installed for the host OS. No GPU is needed.
 
 From a checkout, run the whole fresh-origin-clone check with a temporary parent
 directory. The script creates and removes its own subdirectory; it does not
-delete the parent. Allow about 400 MiB for Chromium and dependencies during
+delete the parent. Allow about 600 MiB for Chromium and dependencies during
 the check. It uses synthetic images only and never opens a browser window.
 
 ```bash
@@ -133,6 +133,13 @@ Executable outputs are disposable builds, not collection backups.
 - 秘密: API キーやトークンは不要。ほかの repo、モデル、外部サービスへの依存もない。
 - 常駐・cron: この repo の必須のものはない。閲覧時に `remote/server.py` を起動するか、Windows EXE を開く。
 - Linux/WSL で確認した範囲: 新規 clone、固定依存の導入、合成画像の試験。Windows の EXE 作成、デスクトップ画面、クリップボードとダイアログは Linux の試験では確認できない。Windows での確認には Windows Python 3.12、PowerShell、PyInstaller、画面環境が要る。
+- 2026-10-20 の実測: 新規 clone から試験終了まで約 2 分 4 秒、一時領域は試験中に約 500 MiB。36 件成功、Windows 専用の 3 件は Linux のためスキップ。
+
+Windows 上で `python -m unittest discover -s test -p test_windows_packaging.py -v` を実行する。
+
+- スキップ: `test_dry_runs_leave_registry_and_installation_unchanged` — Windows のレジストリと PowerShell が必要。
+- スキップ: `test_shell_arguments_round_trip` — Windows の PowerShell が必要。
+- スキップ: `test_failed_build_preserves_existing_executable` — Windows Python と PyInstaller が必要。
 
 ## Local Desktop Mode
 
