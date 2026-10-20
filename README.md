@@ -40,60 +40,61 @@ same name receives a numbered suffix (`_1`, `_2`, ...).
 Install runtime dependencies from the repository root:
 
 ```bash
-uv venv
-uv pip install -e .
+uv sync --locked --python 3.12
 ```
 
 For Windows executable builds, install the build extra:
 
 ```bash
-uv pip install -e ".[build]"
+uv sync --locked --python 3.12 --extra build
 ```
 
 ## 作り直す
 
-These steps rebuild browser mode from source on Linux/WSL without reusing an
-existing virtual environment. Use Python 3.12 or newer, Git and `uv`; Chromium
-tests also need the OS libraries listed by Playwright's browser installer.
-Without root, `apt-get download libnspr4 libnss3`, unpack them with `dpkg -x` into a
-temporary directory and point `LD_LIBRARY_PATH` at its `usr/lib/x86_64-linux-gnu`.
-On Windows, use `.venv\Scripts\python.exe` instead of `.venv/bin/python`.
+Install Git, `uv` and Python 3.12 (the version used for the rebuild check).
+On Debian/Ubuntu, Chromium also needs system libraries such as `libnspr4` and
+`libnss3`. `scripts/rebuild_check.sh` supplies those two from distribution
+packages in its temporary directory if they are absent. Other missing browser
+libraries must be installed for the host OS. No GPU is needed.
 
-Clone this repository's Git remote into your chosen source directory, then
-create a new environment:
+From a checkout, run the whole fresh-origin-clone check with a temporary parent
+directory. The script creates and removes its own subdirectory; it does not
+delete the parent. Allow about 400 MiB for Chromium and dependencies during
+the check. It uses synthetic images only and never opens a browser window.
+
+```bash
+mkdir -p ~/akari-data/tmp/20261020-rview-rebuild
+./scripts/rebuild_check.sh ~/akari-data/tmp/20261020-rview-rebuild
+rmdir ~/akari-data/tmp/20261020-rview-rebuild
+```
+
+To rebuild manually from origin on Linux/WSL:
 
 ```bash
 git clone <repository-url> rview
 cd rview
-uv venv --python 3.12
-uv pip install -e .
-uv pip check
+uv sync --locked --python 3.12 --group test
+uv pip check --python .venv/bin/python
 .venv/bin/python cli.py --help
 .venv/bin/python remote/server.py --help
 ```
 
-The runtime dependencies are declared in `pyproject.toml`. There is no dependency
-lockfile: rebuilding resolves available versions subject to its lower bounds.
-The isolated Linux check on 2026-10-02 used Python 3.12.3, Flask 3.1.3,
-Pillow 12.3.0 and pywebview 6.2.1.
-
-Install test dependencies and the browser, then run the existing tests against
-synthetic images. `RVIEW_SCRATCH` must be a writable temporary directory outside
-your real image collection; remove it after the checks finish.
+`uv.lock` fixes all Python dependency versions, including the `test` group.
+Install the matching headless browser and run the tests with a disposable
+scratch directory outside any real image collection:
 
 ```bash
-uv pip install pytest playwright psutil
 export RVIEW_SCRATCH='<temporary-directory>'
 mkdir -p "$RVIEW_SCRATCH"
 export TMPDIR="$RVIEW_SCRATCH"
 export PLAYWRIGHT_BROWSERS_PATH="$RVIEW_SCRATCH/browsers"
-.venv/bin/python -m playwright install chromium
+.venv/bin/python -m playwright install chromium --only-shell
 .venv/bin/python -m pytest -q -p no:cacheprovider test --basetemp "$RVIEW_SCRATCH/pytest"
 ```
 
-If Chromium reports missing system libraries, install the prerequisites for
-your OS before rerunning. Without Playwright, the two browser tests are skipped;
-that is only a backend check, not a complete browser verification.
+Set `PLAYWRIGHT_BROWSERS_PATH` before browser installation and testing. If
+Chromium reports missing libraries, install the prerequisites for your OS before
+rerunning. A skipped browser test is not a complete rebuild check.
 
 Restore the image collection from its external data storage or backup. Keep
 directory names and the sibling `f`/`g` favorite folders together, along with
@@ -125,13 +126,13 @@ For Windows packaging, install `.[build]` in the Windows environment and follow
 the Windows EXE Build section and [WSL development notes](WSL_DEVELOPMENT.md).
 Executable outputs are disposable builds, not collection backups.
 
-The 2026-10-02 rebuild check covered a fresh Linux environment, backend tests,
-headless Chromium tests and loopback server startup with synthetic data.
-All 33 tests passed. Chromium's missing NSS/NSPR libraries were supplied from
-distribution packages in a temporary directory for that check; a new machine
-must provide these OS dependencies too.
-Native desktop startup, Windows clipboard/dialogs and Windows EXE rebuilding
-were not verified on that environment.
+### 1台の PC に寄せるとき
+
+- Repo 外の必須データ: 画像コレクションと隣接する `f`/`g` フォルダ、各フォルダの `rview-ratings.jsonl`。実際の保存先は利用者が選ぶ。既存のコレクションが `C:\data\akari` にあればそこから移す。`~/akari-data` に固有の必須データはない。
+- 任意のデータ: 重複整理の TSV と、それを指す `maintenance/` のリンク。使っている場合だけ移す。
+- 秘密: API キーやトークンは不要。ほかの repo、モデル、外部サービスへの依存もない。
+- 常駐・cron: この repo の必須のものはない。閲覧時に `remote/server.py` を起動するか、Windows EXE を開く。
+- Linux/WSL で確認した範囲: 新規 clone、固定依存の導入、合成画像の試験。Windows の EXE 作成、デスクトップ画面、クリップボードとダイアログは Linux の試験では確認できない。Windows での確認には Windows Python 3.12、PowerShell、PyInstaller、画面環境が要る。
 
 ## Local Desktop Mode
 
